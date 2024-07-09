@@ -122,10 +122,10 @@ class AKT(nn.Module):
         # Pass to the decoder
         # output shape BS,seqlen,d_model or d_model//2
         d_output = self.model(q_embed_data, qa_embed_data, pid_embed_data)
-        # print("d_output.shape is ", d_output.shape)
+        print("d_output.shape is ", d_output.shape)
 
         concat_q = torch.cat([d_output, q_embed_data], dim=-1)
-        # print("concat_q.shape is ", concat_q.shape)
+        print("concat_q.shape is ", concat_q.shape)
         
         batch_size, seqlen = pid_data.shape
         bert_embeddings = []
@@ -141,10 +141,12 @@ class AKT(nn.Module):
                 batch_emb.append(emb)
             bert_embeddings.append(batch_emb)
         bert_embeddings = torch.tensor(bert_embeddings, dtype=torch.float32).to(q_data.device)
-        # print("bert_embeddings.shape is ", bert_embeddings.shape)
+        print("bert_embeddings.shape is ", bert_embeddings.shape)
+        # print("Shape of embedding is ", concat_q.shape)
         combined_q = torch.cat([concat_q, bert_embeddings], dim=-1)
         
         output = self.out(combined_q).squeeze(-1)
+        print("output.shape is ", self.out(combined_q).shape)
         m = nn.Sigmoid()
         preds = m(output)
         if not qtest:

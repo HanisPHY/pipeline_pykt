@@ -324,8 +324,13 @@ class Experiment_Pipeline():
                 cq = torch.cat((pid_data[:,0:1], shft_pid_data), dim=1)
                 cc = torch.cat((q_data[:,0:1], shft_q_data), dim=1)
                 cr = torch.cat((response[:,0:1], shft_response), dim=1)
+                
+                print("shape of pid_data is ", pid_data.shape)
+                print("shape of shft_pid_data is ", shft_pid_data.shape)
+                print("shape of cq is ", cq.shape)
 
                 y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
+                print("Model output shape is ", y.shape)
                 ys.append(y[:,1:])
                 preloss.append(reg_loss)
                 loss = self.cal_loss(self.model, ys, response, shft_response, sm, preloss)
