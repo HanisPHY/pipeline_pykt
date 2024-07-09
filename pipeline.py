@@ -2,6 +2,10 @@ import logging
 from transformers import logging as transformers_logging
 transformers_logging.set_verbosity_error()
 
+from torch.nn.functional import one_hot
+
+from sklearn.model_selection import train_test_split
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,6 +16,7 @@ from matplotlib import pyplot as plt
 import os, random, time, shutil, warnings
 from sklearn.metrics import accuracy_score, f1_score
 from akt import AKT
+from dkt import DKT
 
 from torch.nn.functional import binary_cross_entropy
 
@@ -23,42 +28,6 @@ def remove_folder(folder_path):
         print(f"The folder '{folder_path}' does not exist.")
     except Exception as e:
         print(f"An error occurred while removing the folder: {e}")
-
-# class CustomDataset(Dataset):
-#     def __init__(self, dataframe, emb_dict, max_length):
-#         self.dataframe = dataframe
-#         self.emb_dict = emb_dict
-#         self.max_length = max_length
-        
-#         self.grouped = self.dataframe.groupby('student_id').apply(lambda x: x).reset_index(drop=True)
-
-#     def __len__(self):
-#         return len(self.grouped['student_id'].unique())
-
-#     def __getitem__(self, idx):
-#         student_id = self.grouped['student_id'].unique()[idx]
-#         student_data = self.grouped[self.grouped['student_id'] == student_id]
-
-#         q_data = torch.tensor(student_data['course_name'].values, dtype=torch.long)
-#         response = torch.tensor(student_data['correctness'].values, dtype=torch.float)
-#         pid_data = torch.tensor(student_data['question_id'].values, dtype=torch.long)
-#         id_data = torch.tensor(student_data['student_id'].values, dtype=torch.long)[0]  # Same for all rows for this student
-
-#         embeddings = []
-#         for qid in pid_data:
-#             emb = self.emb_dict.get((student_id, qid.item()))
-#             if emb is None:
-#                 raise ValueError(f"No embedding found for (student_id, question_id): ({student_id}, {qid.item()})")
-#             embeddings.append(emb)
-#         emb_data = torch.tensor(embeddings, dtype=torch.float32)
-
-#         return {
-#             'q_data': q_data,
-#             'response': response,
-#             'pid_data': pid_data,
-#             'emb_data': emb_data,
-#             'id_data': id_data
-#         }
 
 class CustomDataset(Dataset):
     def __init__(self, dataframe, emb_dict, max_length=20):
@@ -80,71 +49,100 @@ class CustomDataset(Dataset):
         student_id = self.grouped['student_id'].unique()[idx]
         student_data = self.grouped[self.grouped['student_id'] == student_id]
         # print("student_data is ", student_data)
-
-        q_data = student_data['course_name'].values
-        response = student_data['correctness'].values
-        pid_data = student_data['question_id'].values
-        id_data = student_data['student_id'].values[0]  # Same for all rows for this student
-        # print("__getitem__, id_data is ", id_data)
-
+        
+        past_data = student_data[student_data["xy_type"] == "past"]
+        future_data = student_data[student_data["xy_type"] == "future"]
+        
+        # Process past data
+        concept_past = past_data['course_name'].values
+        response_past = past_data['correctness'].values
+        question_past = past_data['question_id'].values
+        id_data_past = past_data['student_id'].values[0]
+        
         # Padding
-        pad_length = self.max_length - len(q_data)
-        mask = np.ones(self.max_length)
-        if pad_length > 0:
-            q_data = np.pad(q_data, (0, pad_length), 'constant', constant_values=0)
-            response = np.pad(response, (0, pad_length), 'constant', constant_values=0)
-            pid_data = np.pad(pid_data, (0, pad_length), 'constant', constant_values=0)
-            mask[len(q_data)-pad_length:] = 0
+        pad_length_past = self.max_length - len(concept_past)
+        mask_past = np.ones(self.max_length)
+        if pad_length_past > 0:
+            concept_past = np.pad(concept_past, (0, pad_length_past), 'constant', constant_values=0)
+            response_past = np.pad(response_past, (0, pad_length_past), 'constant', constant_values=0)
+            question_past = np.pad(question_past, (0, pad_length_past), 'constant', constant_values=0)
+            mask_past[len(concept_past)-pad_length_past:] = 0
         else:
-            q_data = q_data[:self.max_length]
-            response = response[:self.max_length]
-            pid_data = pid_data[:self.max_length]
-    
-        # processed data
-        q_data = torch.tensor(q_data, dtype=torch.int)
-        response = torch.tensor(response, dtype=torch.int)
-        pid_data = torch.tensor(pid_data, dtype=torch.int)
-        id_data = torch.tensor(id_data, dtype=torch.int)
-        mask = torch.tensor(mask, dtype=torch.bool)
-        # print(q_data.shape, mask.shape)
+            concept_past = concept_past[:self.max_length]
+            response_past = response_past[:self.max_length]
+            question_past = question_past[:self.max_length]
         
-        # pykt processing before training model
-        mask = mask[:-1]
-        
-        shft_q_data = q_data[1:] * mask
-        shft_response = response[1:] * mask
-        shft_pid_data = pid_data[1:] * mask
-        
-        q_data = q_data[:-1]
-        response = response[:-1]
-        pid_data = pid_data[:-1]
-        
+        concept_past = torch.tensor(concept_past, dtype=torch.int)
+        response_past = torch.tensor(response_past, dtype=torch.int)
+        question_past = torch.tensor(question_past, dtype=torch.int)
+        mask_past = torch.tensor(mask_past, dtype=torch.bool)
         
         embeddings = []
-        for qid in pid_data:
+        for qid in question_past:
             if qid == -1 or qid.item() == 0:
                 emb = [0.0] * 768  # Assuming the embedding dimension is 768
             else:
-                emb = self.emb_dict.get((student_id, qid.item()))
+                emb = self.emb_dict.get((id_data_past, qid.item()))
                 if emb is None:
-                    raise ValueError(f"No embedding found for (student_id, question_id): ({student_id}, {qid.item()})")
+                    raise ValueError(f"No embedding found for (id_data_past, question_id): ({id_data_past}, {qid.item()})")
             embeddings.append(emb)
-        emb_data = torch.tensor(embeddings, dtype=torch.float32)
+        emb_data_past = torch.tensor(embeddings, dtype=torch.float32)    
+        
+        
+        # Process future(shift) data
+        # print("Future data is ", future_data)
+        concept_future = future_data['course_name'].values
+        response_future = future_data['correctness'].values
+        question_future = future_data['question_id'].values
+        id_data_future = future_data['student_id'].values[0]
+        
+        # Padding
+        pad_length_future = self.max_length - len(concept_future)
+        mask_future = np.ones(self.max_length)
+        if pad_length_future > 0:
+            concept_future = np.pad(concept_future, (0, pad_length_future), 'constant', constant_values=0)
+            response_future = np.pad(response_future, (0, pad_length_future), 'constant', constant_values=0)
+            question_future = np.pad(question_future, (0, pad_length_future), 'constant', constant_values=0)
+            mask_future[len(concept_future)-pad_length_future:] = 0
+        else:
+            concept_future = concept_future[:self.max_length]
+            response_future = response_future[:self.max_length]
+            question_future = question_future[:self.max_length]
+    
+        concept_future = torch.tensor(concept_future, dtype=torch.int)
+        response_future = torch.tensor(response_future, dtype=torch.int)
+        question_future = torch.tensor(question_future, dtype=torch.int)
+        mask_future = torch.tensor(mask_future, dtype=torch.bool)
+        
+        embeddings = []
+        for qid in question_future:
+            if qid == -1 or qid.item() == 0:
+                emb = [0.0] * 768  # Assuming the embedding dimension is 768
+            else:
+                emb = self.emb_dict.get((id_data_future, qid.item()))
+                if emb is None:
+                    raise ValueError(f"No embedding found for (id_data_future, question_id): ({id_data_future}, {qid.item()})")
+            embeddings.append(emb)
+        emb_data_future = torch.tensor(embeddings, dtype=torch.float32)
 
         return {
-            'raw_q_data': q_data,
-            'raw_response': response,
-            'raw_pid_data': pid_data,
-            'shft_q_data': shft_q_data,
-            'shft_response': shft_response,
-            'shft_pid_data': shft_pid_data,
-            'emb_data': emb_data,
-            'id_data': id_data,
-            'mask': mask
+            'concept_past': concept_past,
+            'response_past': response_past,
+            'question_past': question_past,
+            'id_data_past': id_data_past,
+            'emb_data_past': emb_data_past,
+            'mask_past': mask_past,
+            'concept_future': concept_future,
+            'response_future': response_future,
+            'question_future': question_future,
+            'id_data_future': id_data_future,
+            'emb_data_future': emb_data_future,
+            'mask_future': mask_future,
         }
 
 class Experiment_Pipeline():
-    def __init__(self, max_length, log_folder, dataset_raw_path, load_model_type, n_question, n_pid, d_model, n_blocks, dropout, lr=1e-5):
+    # n_pid: num_c
+    def __init__(self, max_length, log_folder, dataset_raw_path, load_model_type, n_question, num_c, d_model, n_blocks, dropout, model_name, emb_size, lr=1e-5):
         self.max_length = max_length
         self.set_seed(4)
 
@@ -153,12 +151,14 @@ class Experiment_Pipeline():
         self.load_model_type = load_model_type
 
         self.n_question = n_question
-        self.n_pid = n_pid
+        self.n_pid = num_c
         self.d_model = d_model
         self.n_blocks = n_blocks
         self.dropout = dropout
+        self.emb_size = emb_size
+        self.model_name = model_name
 
-        self.model_init(load_model_type, lr)
+        self.model_init(load_model_type, model_name, lr)
 
     def set_seed(self, seed_num):
         np.random.seed(seed_num)
@@ -203,13 +203,14 @@ class Experiment_Pipeline():
         # val_size = len(dataset) - train_size
         # train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
         
-        past_data = dataframe_train[dataframe_train["xy_type"] == "past"]
-        future_data = dataframe_train[dataframe_train["xy_type"] == "future"]
-        print("future_data[future_data[student_id]] is ", future_data["student_id"])
-        # test_future_data = dataframe_test[dataframe_test["xy_type"] == "future"]
+        unique_student_ids = dataframe_train["student_id"].unique()
+        train_student_ids, val_student_ids = train_test_split(unique_student_ids, test_size=0.2, random_state=42)
         
-        train_dataset = CustomDataset(past_data, emb_dict_train, self.max_length)
-        val_dataset = CustomDataset(future_data, emb_dict_train, self.max_length)
+        train_data = dataframe_train[dataframe_train["student_id"].isin(train_student_ids)]
+        val_data = dataframe_train[dataframe_train["student_id"].isin(val_student_ids)]
+
+        train_dataset = CustomDataset(train_data, emb_dict_train, self.max_length)
+        val_dataset = CustomDataset(val_data, emb_dict_train, self.max_length)
         test_dataset = CustomDataset(dataframe_test, emb_dict_test, self.max_length)
 
         self.train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size)
@@ -220,7 +221,8 @@ class Experiment_Pipeline():
         if os.path.exists(checkpoint_path): os.remove(checkpoint_path)
         torch.save(checkpoint, checkpoint_path)
 
-    def model_init(self, load_model_type, lr=1e-4):
+    # n_pid: num_c
+    def model_init(self, load_model_type, model_name, lr=1e-4):
         assert load_model_type in ['best', 'last', 'none']
 
         self.checkpoint_last_path = os.path.join(self.log_folder, 'model_last.pt')
@@ -232,7 +234,12 @@ class Experiment_Pipeline():
         if load_model_type in ['best', 'last']:
             checkpoint_path = self.checkpoint_last_path if load_model_type == 'last' else self.checkpoint_best_path
             checkpoint = torch.load(checkpoint_path)
-            self.model = AKT(self.n_question, self.n_pid, self.d_model, self.n_blocks, self.dropout).to(self.device)
+            match model_name:
+                case "akt":
+                    self.model = AKT(self.n_question, self.n_pid, self.d_model, self.n_blocks, self.dropout).to(self.device)
+                case "dkt":
+                    self.model = DKT(self.n_pid, self.emb_size).to(self.device)
+
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -240,15 +247,21 @@ class Experiment_Pipeline():
             self.train_losses = checkpoint['train_loss']
             self.val_losses = checkpoint['val_loss']
         else:
-            self.model = AKT(self.n_question, self.n_pid, self.d_model, self.n_blocks, self.dropout).to(self.device)
+            match model_name:
+                case "akt":
+                    self.model = AKT(self.n_question, self.n_pid, self.d_model, self.n_blocks, self.dropout).to(self.device)
+                case "dkt":
+                    self.model = DKT(self.n_pid, self.emb_size).to(self.device)
             self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
             self.epoch_exist = 0
             self.train_losses = []
             self.val_losses = []
 
         self.criterion = nn.BCELoss()
-        
-    def cal_loss(self, model, ys, r, rshft, sm, preloss=[]):
+    
+    # sm: mask_past    
+    def cal_loss(self, model, ys, r, rshft, mask_past, mask_future, preloss=[]):
+        sm = mask_past
         model_name = model.model_name
 
         if model_name in ["atdkt", "simplekt", "bakt_time", "sparsekt"]:
@@ -269,8 +282,8 @@ class Experiment_Pipeline():
 
         elif model_name in ["rkt","dimkt","dkt", "dkt_forget", "dkvmn","deep_irt", "kqn", "sakt", "saint", "atkt", "atktfix", "gkt", "skvmn", "hawkes"]:
 
-            y = torch.masked_select(ys[0], sm)
-            t = torch.masked_select(rshft, sm)
+            y = torch.masked_select(ys[0], mask_future)
+            t = torch.masked_select(rshft, mask_future)
             loss = binary_cross_entropy(y.double(), t.double())
         elif model_name == "dkt+":
             y_curr = torch.masked_select(ys[1], sm)
@@ -305,35 +318,81 @@ class Experiment_Pipeline():
             self.model.train()
             total_loss = 0
             for batch in self.train_dataloader:
-                ys, preloss = [], []
                 self.optimizer.zero_grad()
-                q_data = batch['raw_q_data'].to(self.device)
-                response = batch['raw_response'].to(self.device)
-                pid_data = batch['raw_pid_data'].to(self.device)
-                id_data = batch['id_data'].to(self.device)
-                # print("id_data is ", id_data)
                 
-                
-                shft_q_data = batch['shft_q_data'].to(self.device)
-                shft_response = batch['shft_response'].to(self.device)
-                shft_pid_data = batch['shft_pid_data'].to(self.device)
-                
-                sm = batch['mask'].to(self.device)
-                # print("Shape of the inputs is ", q_data.shape, response.shape, pid_data.shape, id_data.shape)
-                
-                cq = torch.cat((pid_data[:,0:1], shft_pid_data), dim=1)
-                cc = torch.cat((q_data[:,0:1], shft_q_data), dim=1)
-                cr = torch.cat((response[:,0:1], shft_response), dim=1)
-                
-                print("shape of pid_data is ", pid_data.shape)
-                print("shape of shft_pid_data is ", shft_pid_data.shape)
-                print("shape of cq is ", cq.shape)
+                concept_past = batch['concept_past'].to(self.device)
+                response_past = batch['response_past'].to(self.device)
+                question_past = batch['question_past'].to(self.device)
+                id_data_past = batch['id_data_past'].to(self.device)
+                mask_past = batch['mask_past'].to(self.device)
 
-                y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
-                print("Model output shape is ", y.shape)
-                ys.append(y[:,1:])
-                preloss.append(reg_loss)
-                loss = self.cal_loss(self.model, ys, response, shft_response, sm, preloss)
+                concept_future = batch['concept_future'].to(self.device)
+                response_future = batch['response_future'].to(self.device)
+                question_future = batch['question_future'].to(self.device)
+                id_data_future = batch['id_data_future'].to(self.device)
+                mask_future = batch['mask_future'].to(self.device)
+                
+                ys, preloss = [], []
+                cq = torch.cat((question_past[:,0:1], question_future), dim=1)
+                cc = torch.cat((concept_past[:,0:1], concept_future), dim=1)
+                cr = torch.cat((response_past[:,0:1], response_future), dim=1)
+                
+                match self.model_name:
+                    case 'akt':
+                        # y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
+                        y, reg_loss = self.model(cc, cr, id_data_past, self.emb_dict_train, cq)
+                        preloss.append(reg_loss)
+                    case 'dkt':
+                        y = self.model(concept_past.long(), response_past.long(), id_data_past, self.emb_dict_train)
+                        y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
+                        ys.append(y)
+                        
+                loss = self.cal_loss(self.model, ys, response_past, response_future, mask_past, mask_future, preloss)
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                # q_data = batch['raw_q_data'].to(self.device)
+                # response = batch['raw_response'].to(self.device)
+                # pid_data = batch['raw_pid_data'].to(self.device)
+                # id_data = batch['id_data'].to(self.device)
+                # # print("id_data is ", id_data)
+                
+                
+                # shft_q_data = batch['shft_q_data'].to(self.device)
+                # shft_response = batch['shft_response'].to(self.device)
+                # shft_pid_data = batch['shft_pid_data'].to(self.device)
+                
+                # sm = batch['mask'].to(self.device)
+                # # print("Shape of the inputs is ", q_data.shape, response.shape, pid_data.shape, id_data.shape)
+                
+                # cq = torch.cat((pid_data[:,0:1], shft_pid_data), dim=1)
+                # cc = torch.cat((q_data[:,0:1], shft_q_data), dim=1)
+                # cr = torch.cat((response[:,0:1], shft_response), dim=1)
+                
+                # print("shape of pid_data is ", pid_data.shape)
+                # print("shape of shft_pid_data is ", shft_pid_data.shape)
+                # print("shape of cq is ", cq.shape)
+
+                # y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
+                # print("Model output shape is ", y.shape)
+                # ys.append(y[:,1:])
+                # preloss.append(reg_loss)
+                # loss = self.cal_loss(self.model, ys, response, shft_response, sm, preloss)
                 
                 # print("preds is ", preds)
 
@@ -362,35 +421,6 @@ class Experiment_Pipeline():
             if epoch - best_epoch >= 10:
                 break
 
-    # def model_eval(self, eval_mode):
-    #     self.model.eval()
-    #     total_loss = 0
-    #     all_preds = []
-    #     all_labels = []
-
-    #     dataloader = self.test_dataloader if eval_mode == 'test' else self.val_dataloader
-    #     with torch.no_grad():
-    #         for batch in dataloader:
-    #             q_data = batch['q_data'].to(self.device)
-    #             response = batch['response'].to(self.device)
-    #             pid_data = batch['pid_data'].to(self.device)
-    #             id_data = batch['id_data'].to(self.device)
-
-    #             preds, _ = self.model(q_data, response, id_data, self.emb_dict_test, pid_data)
-    #             loss = self.criterion(preds, response)
-    #             total_loss += loss.item()
-
-    #             preds = (preds > 0.5).float()
-    #             all_preds.extend(preds.cpu().numpy())
-    #             all_labels.extend(response.cpu().numpy())
-
-    #     avg_loss = total_loss / len(dataloader)
-    #     accuracy = accuracy_score(all_labels, all_preds)
-    #     f1 = f1_score(all_labels, all_preds, average='weighted')
-    #     print(f'{eval_mode.capitalize()} loss: {avg_loss}, Accuracy: {accuracy}, F1 Score: {f1}')
-    #     self.val_losses.append(avg_loss)
-
-    #     return avg_loss, accuracy, f1
     def model_eval(self, eval_mode):
         self.model.eval()
         total_loss = 0
@@ -402,42 +432,74 @@ class Experiment_Pipeline():
         with torch.no_grad():
             y_trues = []
             y_scores = []
-            for batch in dataloader:
+            for batch in dataloader:        
+                concept_past = batch['concept_past'].to(self.device)
+                response_past = batch['response_past'].to(self.device)
+                question_past = batch['question_past'].to(self.device)
+                id_data_past = batch['id_data_past'].to(self.device)
+                mask_past = batch['mask_past'].to(self.device)
+
+                concept_future = batch['concept_future'].to(self.device)
+                response_future = batch['response_future'].to(self.device)
+                question_future = batch['question_future'].to(self.device)
+                id_data_future = batch['id_data_future'].to(self.device)
+                mask_future = batch['mask_future'].to(self.device)
+                
                 ys, preloss = [], []
-                q_data = batch['raw_q_data'].to(self.device)
-                response = batch['raw_response'].to(self.device)
-                pid_data = batch['raw_pid_data'].to(self.device)
-                id_data = batch['id_data'].to(self.device)
-                # print("id_data is ", id_data)
+                cq = torch.cat((question_past[:,0:1], question_future), dim=1)
+                cc = torch.cat((concept_past[:,0:1], concept_future), dim=1)
+                cr = torch.cat((response_past[:,0:1], response_future), dim=1)
+                
+                match self.model_name:
+                    case 'akt':
+                        # y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
+                        y, reg_loss = self.model(cc, cr, id_data_past, emb_dic, cq)
+                        preloss.append(reg_loss)
+                    case 'dkt':
+                        y = self.model(concept_past.long(), response_past.long(), id_data_past, emb_dic)
+                        y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
+                        ys.append(y)
+                        
+                loss = self.cal_loss(self.model, ys, response_past, response_future, mask_past, mask_future, preloss)
                 
                 
-                shft_q_data = batch['shft_q_data'].to(self.device)
-                shft_response = batch['shft_response'].to(self.device)
-                shft_pid_data = batch['shft_pid_data'].to(self.device)
                 
-                sm = batch['mask'].to(self.device)
-                # print("Shape of the inputs is ", q_data.shape, response.shape, pid_data.shape, id_data.shape)
+                # q_data = batch['raw_q_data'].to(self.device)
+                # response = batch['raw_response'].to(self.device)
+                # pid_data = batch['raw_pid_data'].to(self.device)
+                # id_data = batch['id_data'].to(self.device)
+                # # print("id_data is ", id_data)
                 
-                cq = torch.cat((pid_data[:,0:1], shft_pid_data), dim=1)
-                cc = torch.cat((q_data[:,0:1], shft_q_data), dim=1)
-                cr = torch.cat((response[:,0:1], shft_response), dim=1)
-                # print(f"response: {response}")
-                # print(f"shft_response: {shft_response}")
                 
-                # print("cq ", -1 in cq)
-                # print("cc ", -1 in cc)
-                # print("cr ", -1 in cr)
-                # print(f"cr: {cr}")
+                # shft_q_data = batch['shft_q_data'].to(self.device)
+                # shft_response = batch['shft_response'].to(self.device)
+                # shft_pid_data = batch['shft_pid_data'].to(self.device)
                 
-                y, reg_loss = self.model(cc, cr, id_data, emb_dic, cq)
-                ys.append(y[:,1:])
-                y = y[:,1:]
-                preloss.append(reg_loss)
-                loss = self.cal_loss(self.model, ys, response, shft_response, sm, preloss)
+                # sm = batch['mask'].to(self.device)
+                # # print("Shape of the inputs is ", q_data.shape, response.shape, pid_data.shape, id_data.shape)
+                
+                # cq = torch.cat((pid_data[:,0:1], shft_pid_data), dim=1)
+                # cc = torch.cat((q_data[:,0:1], shft_q_data), dim=1)
+                # cr = torch.cat((response[:,0:1], shft_response), dim=1)
+                # # print(f"response: {response}")
+                # # print(f"shft_response: {shft_response}")
+                
+                # # print("cq ", -1 in cq)
+                # # print("cc ", -1 in cc)
+                # # print("cr ", -1 in cr)
+                # # print(f"cr: {cr}")
+                
+                # y, reg_loss = self.model(cc, cr, id_data, emb_dic, cq)
+                # ys.append(y[:,1:])
+                # y = y[:,1:]
+                # preloss.append(reg_loss)
+                # loss = self.cal_loss(self.model, ys, response, shft_response, sm, preloss)
+                
+                
                 total_loss += loss.item()
                 
-                y = torch.masked_select(y, sm).detach().cpu()
-                t = torch.masked_select(shft_response, sm).detach().cpu()
+                y = torch.masked_select(y, mask_future).detach().cpu()
+                t = torch.masked_select(response_future, mask_future).detach().cpu()
 
                 y_trues.append(t.numpy())
                 y_scores.append(y.numpy())
@@ -459,13 +521,15 @@ def run_exp_akt():
     dataset_raw_path = './data/dataset_gkt_bert_embed_train_past5.csv'
     log_folder = './data'
 
-    n_pid = 13  # Course name
+    num_c = 13  # Course name
     n_question = 19  # Number of unique problem IDs
     d_model = 200  # Model dimension
     n_blocks = 4  # Number of blocks
     dropout = 0.2  # Dropout rate
+    emb_size = 200
+    model_name = "dkt"
 
-    experiment_pipeline = Experiment_Pipeline(200, log_folder, dataset_raw_path, 'none', n_question, n_pid, d_model, n_blocks, dropout)
+    experiment_pipeline = Experiment_Pipeline(200, log_folder, dataset_raw_path, 'none', n_question, num_c, d_model, n_blocks, dropout, model_name, emb_size)
     experiment_pipeline.dataset_prepare(dataset_path_train, dataset_path_test)
     experiment_pipeline.model_train(epochs=30)
     print("--------------testing--------------")

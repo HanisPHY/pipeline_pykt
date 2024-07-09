@@ -87,6 +87,9 @@ class AKT(nn.Module):
             qa_embed_data = self.qa_embed(target)+q_embed_data
         return q_embed_data, qa_embed_data
 
+    # q_data: concept
+    # target: respone
+    # pid_dat: question
     def forward(self, q_data, target, id, emb_dic, pid_data=None, qtest=False):
         # print("pid_data.shape is ", pid_data.shape)
         # print("q_data.shape is ", q_data.shape)
