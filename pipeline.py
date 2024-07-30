@@ -15,8 +15,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 import os, random, time, shutil, warnings
 from sklearn.metrics import accuracy_score, f1_score
-from akt import AKT
-from dkt import DKT
+from model.akt import AKT
+from model.dkt import DKT
 
 from torch.nn.functional import binary_cross_entropy
 
@@ -54,7 +54,7 @@ class CustomDataset(Dataset):
         future_data = student_data[student_data["xy_type"] == "future"]
         
         # Process past data
-        concept_past = past_data['course_name'].values
+        concept_past = past_data['slide_id'].values
         response_past = past_data['correctness'].values
         question_past = past_data['question_id'].values
         id_data_past = past_data['student_id'].values[0]
@@ -91,7 +91,7 @@ class CustomDataset(Dataset):
         
         # Process future(shift) data
         # print("Future data is ", future_data)
-        concept_future = future_data['course_name'].values
+        concept_future = future_data['slide_id'].values
         response_future = future_data['correctness'].values
         question_future = future_data['question_id'].values
         id_data_future = future_data['student_id'].values[0]
@@ -168,6 +168,7 @@ class Experiment_Pipeline():
         torch.cuda.manual_seed_all(seed_num)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+        self.train_test_seed = seed_num
 
     def dataset_prepare(self, dataset_path_train, dataset_path_test, batch_size=64):
         dataframe_train = pd.read_csv(dataset_path_train, sep='\t')
@@ -204,7 +205,7 @@ class Experiment_Pipeline():
         # train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
         
         unique_student_ids = dataframe_train["student_id"].unique()
-        train_student_ids, val_student_ids = train_test_split(unique_student_ids, test_size=0.2, random_state=42)
+        train_student_ids, val_student_ids = train_test_split(unique_student_ids, test_size=0.2, random_state=self.train_test_seed)
         
         train_data = dataframe_train[dataframe_train["student_id"].isin(train_student_ids)]
         val_data = dataframe_train[dataframe_train["student_id"].isin(val_student_ids)]
@@ -341,12 +342,14 @@ class Experiment_Pipeline():
                     case 'akt':
                         # y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
                         y, reg_loss = self.model(cc, cr, id_data_past, self.emb_dict_train, cq)
+                        ys.append(y[:,1:])
                         preloss.append(reg_loss)
                     case 'dkt':
                         y = self.model(concept_past.long(), response_past.long(), id_data_past, self.emb_dict_train)
                         y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
                         ys.append(y)
-                        
+                
+                print("len(ys) is ", len(ys))
                 loss = self.cal_loss(self.model, ys, response_past, response_future, mask_past, mask_future, preloss)
                 
                 
@@ -454,6 +457,8 @@ class Experiment_Pipeline():
                     case 'akt':
                         # y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
                         y, reg_loss = self.model(cc, cr, id_data_past, emb_dic, cq)
+                        ys.append(y[:,1:])
+                        y = y[:,1:]
                         preloss.append(reg_loss)
                     case 'dkt':
                         y = self.model(concept_past.long(), response_past.long(), id_data_past, emb_dic)
@@ -515,10 +520,10 @@ class Experiment_Pipeline():
 
         return avg_loss, accuracy, f1
 
-def run_exp_akt():
-    dataset_path_train = './data/dataset_gkt_bert_embed_train_past5.csv'
-    dataset_path_test = './data/dataset_gkt_bert_embed_test_public_past5.csv'
-    dataset_raw_path = './data/dataset_gkt_bert_embed_train_past5.csv'
+def run_exp():
+    dataset_path_train = './data/gkt_bert/dataset_gkt_bert_embed_train_past5.csv'
+    dataset_path_test = './data/gkt_bert/dataset_gkt_bert_embed_test_public_past5.csv'
+    dataset_raw_path = './data/gkt_bert/dataset_gkt_bert_embed_train_past5.csv'
     log_folder = './data'
 
     num_c = 13  # Course name
@@ -527,7 +532,7 @@ def run_exp_akt():
     n_blocks = 4  # Number of blocks
     dropout = 0.2  # Dropout rate
     emb_size = 200
-    model_name = "dkt"
+    model_name = "akt"
 
     experiment_pipeline = Experiment_Pipeline(200, log_folder, dataset_raw_path, 'none', n_question, num_c, d_model, n_blocks, dropout, model_name, emb_size)
     experiment_pipeline.dataset_prepare(dataset_path_train, dataset_path_test)
@@ -535,4 +540,4 @@ def run_exp_akt():
     print("--------------testing--------------")
     experiment_pipeline.model_eval(eval_mode='test')
 
-run_exp_akt()
+run_exp()
