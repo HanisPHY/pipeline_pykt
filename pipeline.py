@@ -231,6 +231,9 @@ class Experiment_Pipeline():
         torch.save(checkpoint, checkpoint_path)
 
     # n_pid: num_c
+    # new:
+    # num_c: n_question
+    # num_q: n_pid
     def model_init(self, load_model_type, model_name, lr=1e-4):
         assert load_model_type in ['best', 'last', 'none']
 
@@ -342,21 +345,21 @@ class Experiment_Pipeline():
                 mask_future = batch['mask_future'].to(self.device)
                 
                 ys, preloss = [], []
-                cq = torch.cat((question_past[:,0:1], question_future), dim=1)
-                cc = torch.cat((concept_past[:,0:1], concept_future), dim=1)
-                cr = torch.cat((response_past[:,0:1], response_future), dim=1)
-                # cq = question_past
-                # cc = concept_past
-                # cr = response_past
+                # cq = torch.cat((question_past[:,0:1], question_future), dim=1)
+                # cc = torch.cat((concept_past[:,0:1], concept_future), dim=1)
+                # cr = torch.cat((response_past[:,0:1], response_future), dim=1)
+                cq = question_past
+                cc = concept_past
+                cr = response_past
                 
                 match self.model_name:
                     case 'akt':
                         # y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
                         y, reg_loss = self.model(cc, cr, id_data_past, self.emb_dict_train, cq)
-                        ys.append(y[:,1:])
+                        ys.append(y)
                         preloss.append(reg_loss)
                     case 'dkt':
-                        y = self.model(concept_past.long(), response_past.long(), id_data_past, self.emb_dict_train)
+                        y = self.model(concept_past.long(), response_past.long(), id_data_past, self.emb_dict_train, cq)
                         y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
                         ys.append(y)
                 
@@ -464,19 +467,21 @@ class Experiment_Pipeline():
                 mask_future = batch['mask_future'].to(self.device)
                 
                 ys, preloss = [], []
-                cq = torch.cat((question_past[:,0:1], question_future), dim=1)
-                cc = torch.cat((concept_past[:,0:1], concept_future), dim=1)
-                cr = torch.cat((response_past[:,0:1], response_future), dim=1)
+                # cq = torch.cat((question_past[:,0:1], question_future), dim=1)
+                # cc = torch.cat((concept_past[:,0:1], concept_future), dim=1)
+                # cr = torch.cat((response_past[:,0:1], response_future), dim=1)
+                cq = question_past
+                cc = concept_past
+                cr = response_past
                 
                 match self.model_name:
                     case 'akt':
                         # y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
                         y, reg_loss = self.model(cc, cr, id_data_past, emb_dic, cq)
-                        ys.append(y[:,1:])
-                        y = y[:,1:]
+                        ys.append(y)
                         preloss.append(reg_loss)
                     case 'dkt':
-                        y = self.model(concept_past.long(), response_past.long(), id_data_past, emb_dic)
+                        y = self.model(concept_past.long(), response_past.long(), id_data_past, emb_dic, question_past)
                         y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
                         ys.append(y)
                         
@@ -547,7 +552,7 @@ def run_exp():
     n_blocks = 4  # Number of blocks
     dropout = 0.2  # Dropout rate
     emb_size = 200
-    model_name = "akt"
+    model_name = "dkt"
 
     experiment_pipeline = Experiment_Pipeline(200, log_folder, dataset_raw_path, 'none', n_question, num_c, d_model, n_blocks, dropout, model_name, emb_size)
     experiment_pipeline.dataset_prepare(dataset_path_train, dataset_path_test)
