@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data._utils.collate import default_collate
 import pandas as pd
 import numpy as np
 from matplotlib import pyplot as plt
@@ -48,15 +49,21 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         student_id = self.grouped['student_id'].unique()[idx]
         student_data = self.grouped[self.grouped['student_id'] == student_id]
-        # print("student_data is ", student_data)
+        # print("student_data is\n", student_data)
+        # print("student_data[student_id] is\n", student_data['student_id'])
         
         past_data = student_data[student_data["xy_type"] == "past"]
         future_data = student_data[student_data["xy_type"] == "future"]
         
+        if len(past_data) == 0 or len(future_data) == 0:
+            print(f"No valid data for student_id: {student_id}")
+            return None
+            
         # Process past data
         concept_past = past_data['slide_id'].values
         response_past = past_data['correctness'].values
         question_past = past_data['question_id'].values
+        # print("past_data['student_id'] is\n", past_data['student_id'])
         id_data_past = past_data['student_id'].values[0]
         
         # Padding
@@ -171,24 +178,20 @@ class Experiment_Pipeline():
         self.train_test_seed = seed_num
 
     def dataset_prepare(self, dataset_path_train, dataset_path_test, batch_size=64):
-        dataframe_train = pd.read_csv(dataset_path_train, sep='\t')
-        dataframe_test = pd.read_csv(dataset_path_test, sep='\t')
-        
-        for i, row in dataframe_test.iterrows():
-            if pd.isna(row["correctness"]):
-                dataframe_test.at[i, "correctness"] = int(row["student_choice"] == row["correct_choice"])
+        dataframe_train = pd.read_csv(dataset_path_train)
+        dataframe_test = pd.read_csv(dataset_path_test)
         
         emb_dict_train = {"type": "train"}
         emb_dict_test = {"type": "test"}
 
         for _, row in dataframe_train.iterrows():
-            str_emb = row["embedding_bert"].strip('][').split(', ')
+            str_emb = row["content_emb"].strip('][').split(',')
             float_emb = [float(emb) for emb in str_emb]
             emb_dict_train[(int(row['student_id']), int(row['question_id']))] = float_emb
             # print("(row['student_id'], row['question_id']) is ", (row['student_id'], row['question_id']))
         # print("emb_dict_train[(136,9)] is ", emb_dict_train[(136,9)])
         for _, row in dataframe_test.iterrows():
-            str_emb = row["embedding_bert"].strip('][').split(', ')
+            str_emb = row["content_emb"].strip('][').split(',')
             float_emb = [float(emb) for emb in str_emb]
             emb_dict_test[(int(row['student_id']), int(row['question_id']))] = float_emb
         # print("type of row['student_id'] is ", type(row['student_id']))
@@ -214,9 +217,14 @@ class Experiment_Pipeline():
         val_dataset = CustomDataset(val_data, emb_dict_train, self.max_length)
         test_dataset = CustomDataset(dataframe_test, emb_dict_test, self.max_length)
 
-        self.train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size)
-        self.val_dataloader = DataLoader(val_dataset, batch_size=batch_size)
-        self.test_dataloader = DataLoader(test_dataset, batch_size=batch_size)
+        self.train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size, collate_fn=self.custom_collate_fn)
+        self.val_dataloader = DataLoader(val_dataset, batch_size=batch_size, collate_fn=self.custom_collate_fn)
+        self.test_dataloader = DataLoader(test_dataset, batch_size=batch_size, collate_fn=self.custom_collate_fn)
+
+    def custom_collate_fn(self, batch):
+        # Filter out empty dictionaries
+        batch = [data for data in batch if data]
+        return default_collate(batch)
 
     def model_save(self, checkpoint, checkpoint_path):
         if os.path.exists(checkpoint_path): os.remove(checkpoint_path)
@@ -266,8 +274,8 @@ class Experiment_Pipeline():
         model_name = model.model_name
 
         if model_name in ["atdkt", "simplekt", "bakt_time", "sparsekt"]:
-            y = torch.masked_select(ys[0], sm)
-            t = torch.masked_select(rshft, sm)
+            y = torch.masked_select(ys[0], mask_future)
+            t = torch.masked_select(rshft, mask_future)
             # print(f"loss1: {y.shape}")
             loss1 = binary_cross_entropy(y.double(), t.double())
 
@@ -287,26 +295,26 @@ class Experiment_Pipeline():
             t = torch.masked_select(rshft, mask_future)
             loss = binary_cross_entropy(y.double(), t.double())
         elif model_name == "dkt+":
-            y_curr = torch.masked_select(ys[1], sm)
-            y_next = torch.masked_select(ys[0], sm)
-            r_curr = torch.masked_select(r, sm)
-            r_next = torch.masked_select(rshft, sm)
+            y_curr = torch.masked_select(ys[1], mask_future)
+            y_next = torch.masked_select(ys[0], mask_future)
+            r_curr = torch.masked_select(r, mask_future)
+            r_next = torch.masked_select(rshft, mask_future)
             loss = binary_cross_entropy(y_next.double(), r_next.double())
 
             loss_r = binary_cross_entropy(y_curr.double(), r_curr.double()) # if answered wrong for C in t-1, cur answer for C should be wrong too
-            loss_w1 = torch.masked_select(torch.norm(ys[2][:, 1:] - ys[2][:, :-1], p=1, dim=-1), sm[:, 1:])
+            loss_w1 = torch.masked_select(torch.norm(ys[2][:, 1:] - ys[2][:, :-1], p=1, dim=-1), mask_future[:, 1:])
             loss_w1 = loss_w1.mean() / model.num_c
-            loss_w2 = torch.masked_select(torch.norm(ys[2][:, 1:] - ys[2][:, :-1], p=2, dim=-1) ** 2, sm[:, 1:])
+            loss_w2 = torch.masked_select(torch.norm(ys[2][:, 1:] - ys[2][:, :-1], p=2, dim=-1) ** 2, mask_future[:, 1:])
             loss_w2 = loss_w2.mean() / model.num_c
 
             loss = loss + model.lambda_r * loss_r + model.lambda_w1 * loss_w1 + model.lambda_w2 * loss_w2
         elif model_name in ["akt","folibikt", "akt_vector", "akt_norasch", "akt_mono", "akt_attn", "aktattn_pos", "aktmono_pos", "akt_raschx", "akt_raschy", "aktvec_raschx","dtransformer"]:
-            y = torch.masked_select(ys[0], sm)
-            t = torch.masked_select(rshft, sm)
+            y = torch.masked_select(ys[0], mask_future)
+            t = torch.masked_select(rshft, mask_future)
             loss = binary_cross_entropy(y.double(), t.double()) + preloss[0]
         elif model_name == "lpkt":
-            y = torch.masked_select(ys[0], sm)
-            t = torch.masked_select(rshft, sm)
+            y = torch.masked_select(ys[0], mask_future)
+            t = torch.masked_select(rshft, mask_future)
             criterion = nn.BCELoss(reduction='none')        
             loss = criterion(y, t).sum()
         
@@ -337,6 +345,9 @@ class Experiment_Pipeline():
                 cq = torch.cat((question_past[:,0:1], question_future), dim=1)
                 cc = torch.cat((concept_past[:,0:1], concept_future), dim=1)
                 cr = torch.cat((response_past[:,0:1], response_future), dim=1)
+                # cq = question_past
+                # cc = concept_past
+                # cr = response_past
                 
                 match self.model_name:
                     case 'akt':
@@ -349,7 +360,11 @@ class Experiment_Pipeline():
                         y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
                         ys.append(y)
                 
-                print("len(ys) is ", len(ys))
+                # print("len(ys) is ", len(ys))
+                # print("response future is ", response_future[0])
+                # print("mask_future is ", mask_future[0])
+                # print("y is ", y)
+                # print("response_future is ", response_future)
                 loss = self.cal_loss(self.model, ys, response_past, response_future, mask_past, mask_future, preloss)
                 
                 
@@ -521,13 +536,13 @@ class Experiment_Pipeline():
         return avg_loss, accuracy, f1
 
 def run_exp():
-    dataset_path_train = './data/gkt_bert/dataset_gkt_bert_embed_train_past5.csv'
-    dataset_path_test = './data/gkt_bert/dataset_gkt_bert_embed_test_public_past5.csv'
-    dataset_raw_path = './data/gkt_bert/dataset_gkt_bert_embed_train_past5.csv'
+    dataset_path_train = './data/gkt_new/cogedu_emb_train.csv'
+    dataset_path_test = './data/gkt_new/cogedu_emb_test.csv'
+    dataset_raw_path = './data/gkt_new/cogedu_emb.csv'
     log_folder = './data'
 
-    num_c = 13  # Course name
-    n_question = 19  # Number of unique problem IDs
+    num_c = 12  # Course name
+    n_question = 119  # Number of unique problem IDs
     d_model = 200  # Model dimension
     n_blocks = 4  # Number of blocks
     dropout = 0.2  # Dropout rate
