@@ -16,8 +16,8 @@ class DKT(Module):
         self.emb_type = emb_type
 
         if emb_type.startswith("qid"):
-            print("size of interaction_emb input is ", self.emb_size)
-            self.interaction_emb = Embedding(self.num_c * 2 + 20, self.emb_size)
+            # print("size of interaction_emb input is ", self.emb_size)
+            self.interaction_emb = Embedding(self.num_c * 2, self.emb_size)
 
         self.lstm_layer = LSTM(self.emb_size + BERT_EMB_DIM, self.hidden_size, batch_first=True)
         self.dropout_layer = Dropout(dropout)
@@ -42,21 +42,12 @@ class DKT(Module):
         
         emb_type = self.emb_type
         if emb_type == "qid":
-            x = (q + self.num_c * r).long()  # Ensure x contains integer indices
-            print("q is ", q)
-            print("x.shape is", x.shape)  # Check the shape of x
-            print("x.min():", x.min().item(), "x.max():", x.max().item())  # Check the range of indices
-            print("q.min(): ", q.min().item(), "q.max():", q.max().item())
-            
-            # Ensure the sequence length matches expected size
-            if x.shape[1] != 200:
-                print("Warning: Unexpected sequence length")
-
-            # Ensure all indices are within the valid range
-            print("self.num_c * 2 is ", self.num_c * 2)
-            # assert x.min() >= 0 and x.max() < self.num_c * 2, "Indices are out of range for the embedding layer"
-
-            # Pass the valid input tensor to the embedding layer
+            x = q + self.num_c * r
+            # print("q is ", q)
+            # print("x.shape is ", x.shape)
+            # print("self.num_c is ", self.num_c)
+            # print("x.min():", x.min().item(), "x.max():", x.max().item())
+            # print("q.min(): ", q.min().item(), "q.max():", q.max().item())
             xemb = self.interaction_emb(x)
     
         print(f"xemb.shape is {xemb.shape}, device: {xemb.device}")

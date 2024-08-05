@@ -18,8 +18,23 @@ import os, random, time, shutil, warnings
 from sklearn.metrics import accuracy_score, f1_score
 from model.akt import AKT
 from model.dkt import DKT
+from model.atkt import ATKT
+from model.saint import SAINT
+from model.dkvmn import DKVMN
 
 from torch.nn.functional import binary_cross_entropy
+
+from torch.autograd import Variable, grad
+from model.atkt import _l2_normalize_adv
+
+ATKT_SKILL_DIM=256
+ATKT_ANSWER_DIM=96
+ATKT_HIDDEN_DIM=80
+SEQ_LEN = 200
+DROPOUT=0.2
+NUM_ATTN_HEADS=8
+DKVMN_DIM_S=200
+DKVMN_SIZE_M=50
 
 def remove_folder(folder_path):
     try:
@@ -60,7 +75,7 @@ class CustomDataset(Dataset):
             return None
             
         # Process past data
-        concept_past = past_data['slide_id'].values
+        concept_past = past_data['course_name'].values
         response_past = past_data['correctness'].values
         question_past = past_data['question_id'].values
         # print("past_data['student_id'] is\n", past_data['student_id'])
@@ -98,7 +113,7 @@ class CustomDataset(Dataset):
         
         # Process future(shift) data
         # print("Future data is ", future_data)
-        concept_future = future_data['slide_id'].values
+        concept_future = future_data['course_name'].values
         response_future = future_data['correctness'].values
         question_future = future_data['question_id'].values
         id_data_future = future_data['student_id'].values[0]
@@ -148,8 +163,7 @@ class CustomDataset(Dataset):
         }
 
 class Experiment_Pipeline():
-    # n_pid: num_c
-    def __init__(self, max_length, log_folder, dataset_raw_path, load_model_type, n_question, num_c, d_model, n_blocks, dropout, model_name, emb_size, lr=1e-5):
+    def __init__(self, max_length, log_folder, dataset_raw_path, load_model_type, num_q, num_c, d_model, n_blocks, dropout, model_name, emb_size, lr=1e-5):
         self.max_length = max_length
         self.set_seed(4)
 
@@ -157,8 +171,8 @@ class Experiment_Pipeline():
         self.log_folder = log_folder
         self.load_model_type = load_model_type
 
-        self.n_question = n_question
-        self.n_pid = num_c
+        self.num_q = num_q
+        self.num_c = num_c
         self.d_model = d_model
         self.n_blocks = n_blocks
         self.dropout = dropout
@@ -230,8 +244,6 @@ class Experiment_Pipeline():
         if os.path.exists(checkpoint_path): os.remove(checkpoint_path)
         torch.save(checkpoint, checkpoint_path)
 
-    # n_pid: num_c
-    # new:
     # num_c: n_question
     # num_q: n_pid
     def model_init(self, load_model_type, model_name, lr=1e-4):
@@ -248,9 +260,16 @@ class Experiment_Pipeline():
             checkpoint = torch.load(checkpoint_path)
             match model_name:
                 case "akt":
-                    self.model = AKT(self.n_question, self.n_pid, self.d_model, self.n_blocks, self.dropout).to(self.device)
+                    self.model = AKT(self.num_c, self.num_q, self.d_model, self.n_blocks, self.dropout).to(self.device)
                 case "dkt":
-                    self.model = DKT(self.n_pid, self.emb_size).to(self.device)
+                    self.model = DKT(self.num_c, self.emb_size).to(self.device)
+                case "atkt":
+                    self.model = ATKT(self.num_c, ATKT_SKILL_DIM, ATKT_ANSWER_DIM, ATKT_HIDDEN_DIM).to(self.device)
+                case "saint":
+                    self.model = SAINT(self.num_q, self.num_c, self.max_length, self.emb_size, NUM_ATTN_HEADS, DROPOUT).to(self.device)
+                case "dkvmn":
+                    self.model = DKVMN(self.num_c, dim_s=200, size_m=50).to(self.device)
+                
 
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
@@ -261,9 +280,16 @@ class Experiment_Pipeline():
         else:
             match model_name:
                 case "akt":
-                    self.model = AKT(self.n_question, self.n_pid, self.d_model, self.n_blocks, self.dropout).to(self.device)
+                    self.model = AKT(self.num_c, self.num_q, self.d_model, self.n_blocks, self.dropout).to(self.device)
                 case "dkt":
-                    self.model = DKT(self.n_pid, self.emb_size).to(self.device)
+                    self.model = DKT(self.num_c, self.emb_size).to(self.device)
+                case "atkt":
+                    self.model = ATKT(self.num_c, ATKT_SKILL_DIM, ATKT_ANSWER_DIM, ATKT_HIDDEN_DIM).to(self.device)
+                case "saint":
+                    self.model = SAINT(self.num_q, self.num_c, self.max_length, self.emb_size, NUM_ATTN_HEADS, DROPOUT).to(self.device)
+                case "dkvmn":
+                    self.model = DKVMN(self.num_c, dim_s=DKVMN_DIM_S, size_m=DKVMN_SIZE_M).to(self.device)
+                    
             self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
             self.epoch_exist = 0
             self.train_losses = []
@@ -293,7 +319,7 @@ class Experiment_Pipeline():
                 loss = loss1
 
         elif model_name in ["rkt","dimkt","dkt", "dkt_forget", "dkvmn","deep_irt", "kqn", "sakt", "saint", "atkt", "atktfix", "gkt", "skvmn", "hawkes"]:
-
+            print(ys[0].shape, mask_future.shape)
             y = torch.masked_select(ys[0], mask_future)
             t = torch.masked_select(rshft, mask_future)
             loss = binary_cross_entropy(y.double(), t.double())
@@ -362,60 +388,36 @@ class Experiment_Pipeline():
                         y = self.model(concept_past.long(), response_past.long(), id_data_past, self.emb_dict_train, cq)
                         y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
                         ys.append(y)
+                    case 'atkt':
+                        y, features = self.model(concept_past.long(), response_past.long(), id_data_past, self.emb_dict_train, cq)
+                        # print("y is ", y)
+                        # print("features is ", features)
+                        y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
+                        # print("after processing, y is ", y)
+                        loss = self.cal_loss(self.model, [y], response_past, response_future, mask_past, mask_future)
+                        # at
+                        features_grad = grad(loss, features, retain_graph=True)
+                        p_adv = torch.FloatTensor(self.model.epsilon * _l2_normalize_adv(features_grad[0].data))
+                        p_adv = Variable(p_adv).to(self.device)
+                        pred_res, _ = self.model(concept_past.long(), response_past.long(), id_data_past, self.emb_dict_train, cq, p_adv)
+                        # second loss
+                        pred_res = (pred_res * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
+                        adv_loss = self.cal_loss(self.model, [pred_res], response_past, response_future, mask_past, mask_future)
+                        loss = loss + self.model.beta * adv_loss
+                    case 'saint':
+                        y = self.model(cq.long(), cc.long(), response_past.long(), id_data_past, self.emb_dict_train)
+                        ys.append(y[:, 1:])
+                    case 'dkvmn':
+                        y = self.model(cc.long(), cr.long(), id_data_past, self.emb_dict_train, cq)
+                        ys.append(y)
                 
                 # print("len(ys) is ", len(ys))
                 # print("response future is ", response_future[0])
                 # print("mask_future is ", mask_future[0])
                 # print("y is ", y)
                 # print("response_future is ", response_future)
-                loss = self.cal_loss(self.model, ys, response_past, response_future, mask_past, mask_future, preloss)
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                # q_data = batch['raw_q_data'].to(self.device)
-                # response = batch['raw_response'].to(self.device)
-                # pid_data = batch['raw_pid_data'].to(self.device)
-                # id_data = batch['id_data'].to(self.device)
-                # # print("id_data is ", id_data)
-                
-                
-                # shft_q_data = batch['shft_q_data'].to(self.device)
-                # shft_response = batch['shft_response'].to(self.device)
-                # shft_pid_data = batch['shft_pid_data'].to(self.device)
-                
-                # sm = batch['mask'].to(self.device)
-                # # print("Shape of the inputs is ", q_data.shape, response.shape, pid_data.shape, id_data.shape)
-                
-                # cq = torch.cat((pid_data[:,0:1], shft_pid_data), dim=1)
-                # cc = torch.cat((q_data[:,0:1], shft_q_data), dim=1)
-                # cr = torch.cat((response[:,0:1], shft_response), dim=1)
-                
-                # print("shape of pid_data is ", pid_data.shape)
-                # print("shape of shft_pid_data is ", shft_pid_data.shape)
-                # print("shape of cq is ", cq.shape)
-
-                # y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
-                # print("Model output shape is ", y.shape)
-                # ys.append(y[:,1:])
-                # preloss.append(reg_loss)
-                # loss = self.cal_loss(self.model, ys, response, shft_response, sm, preloss)
-                
-                # print("preds is ", preds)
+                if self.model_name not in ["atkt", "atktfix"]:
+                    loss = self.cal_loss(self.model, ys, response_past, response_future, mask_past, mask_future, preloss)
 
                 loss.backward()
                 self.optimizer.step()
@@ -484,44 +486,22 @@ class Experiment_Pipeline():
                         y = self.model(concept_past.long(), response_past.long(), id_data_past, emb_dic, question_past)
                         y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
                         ys.append(y)
+                    case 'atkt':
+                        y, _ = self.model(concept_past.long(), response_past.long(), id_data_past, emb_dic, cq)
+                        y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
+                    case 'saint':
+                        y, h = self.model(cq.long(), cc.long(), response_past.long(), id_data_past, emb_dic, True)
+                        y = y[:,1:]
+                    case 'dkvmn':
+                        y = self.model(cc.long(), cr.long(), id_data_past, emb_dic, cq)
+                        ys.append(y)
                         
-                loss = self.cal_loss(self.model, ys, response_past, response_future, mask_past, mask_future, preloss)
-                
-                
-                
-                # q_data = batch['raw_q_data'].to(self.device)
-                # response = batch['raw_response'].to(self.device)
-                # pid_data = batch['raw_pid_data'].to(self.device)
-                # id_data = batch['id_data'].to(self.device)
-                # # print("id_data is ", id_data)
-                
-                
-                # shft_q_data = batch['shft_q_data'].to(self.device)
-                # shft_response = batch['shft_response'].to(self.device)
-                # shft_pid_data = batch['shft_pid_data'].to(self.device)
-                
-                # sm = batch['mask'].to(self.device)
-                # # print("Shape of the inputs is ", q_data.shape, response.shape, pid_data.shape, id_data.shape)
-                
-                # cq = torch.cat((pid_data[:,0:1], shft_pid_data), dim=1)
-                # cc = torch.cat((q_data[:,0:1], shft_q_data), dim=1)
-                # cr = torch.cat((response[:,0:1], shft_response), dim=1)
-                # # print(f"response: {response}")
-                # # print(f"shft_response: {shft_response}")
-                
-                # # print("cq ", -1 in cq)
-                # # print("cc ", -1 in cc)
-                # # print("cr ", -1 in cr)
-                # # print(f"cr: {cr}")
-                
-                # y, reg_loss = self.model(cc, cr, id_data, emb_dic, cq)
-                # ys.append(y[:,1:])
-                # y = y[:,1:]
-                # preloss.append(reg_loss)
-                # loss = self.cal_loss(self.model, ys, response, shft_response, sm, preloss)
-                
-                
-                total_loss += loss.item()
+                if self.model_name not in ["atkt", "atktfix"]:        
+                    loss = self.cal_loss(self.model, ys, response_past, response_future, mask_past, mask_future, preloss)
+                    total_loss += loss.item()
+                else:
+                    print("Didn't calculate loss.")
+                    total_loss = 0
                 
                 y = torch.masked_select(y, mask_future).detach().cpu()
                 t = torch.masked_select(response_future, mask_future).detach().cpu()
@@ -546,15 +526,18 @@ def run_exp():
     dataset_raw_path = './data/gkt_new/cogedu_emb.csv'
     log_folder = './data'
 
-    num_c = 12  # Course name
-    n_question = 119  # Number of unique problem IDs
+    # concept: course
+    # 1-index: +1; 0-index: no need to +1
+    # Embedding layer size match
+    num_c = 12 + 1  # Course name
+    num_q = 119 + 1  # Number of unique problem IDs
     d_model = 200  # Model dimension
     n_blocks = 4  # Number of blocks
     dropout = 0.2  # Dropout rate
     emb_size = 200
-    model_name = "dkt"
+    model_name = "dkvmn"
 
-    experiment_pipeline = Experiment_Pipeline(200, log_folder, dataset_raw_path, 'none', n_question, num_c, d_model, n_blocks, dropout, model_name, emb_size)
+    experiment_pipeline = Experiment_Pipeline(200, log_folder, dataset_raw_path, 'none', num_q, num_c, d_model, n_blocks, dropout, model_name, emb_size)
     experiment_pipeline.dataset_prepare(dataset_path_train, dataset_path_test)
     experiment_pipeline.model_train(epochs=30)
     print("--------------testing--------------")
