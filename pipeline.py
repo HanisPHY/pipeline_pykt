@@ -535,7 +535,7 @@ def run_exp():
     n_blocks = 4  # Number of blocks
     dropout = 0.2  # Dropout rate
     emb_size = 200
-    model_name = "dkvmn"
+    model_name = "atkt"
 
     experiment_pipeline = Experiment_Pipeline(200, log_folder, dataset_raw_path, 'none', num_q, num_c, d_model, n_blocks, dropout, model_name, emb_size)
     experiment_pipeline.dataset_prepare(dataset_path_train, dataset_path_test)
