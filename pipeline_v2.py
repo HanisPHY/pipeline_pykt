@@ -64,8 +64,6 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         student_id = self.grouped['student_id'].unique()[idx]
         student_data = self.grouped[self.grouped['student_id'] == student_id]
-        # print("student_data is\n", student_data)
-        # print("student_data[student_id] is\n", student_data['student_id'])
         
         past_data = student_data[student_data["xy_type"] == "past"]
         future_data = student_data[student_data["xy_type"] == "future"]
@@ -78,7 +76,6 @@ class CustomDataset(Dataset):
         concept_past = past_data['unique_slide_id'].values
         response_past = past_data['correctness'].values
         question_past = past_data['unique_question_id'].values
-        # print("past_data['student_id'] is\n", past_data['student_id'])
         id_data_past = past_data['student_id'].values[0]
         
         # Padding
@@ -112,7 +109,6 @@ class CustomDataset(Dataset):
         
         
         # Process future(shift) data
-        # print("Future data is ", future_data)
         concept_future = future_data['unique_slide_id'].values
         response_future = future_data['correctness'].values
         question_future = future_data['unique_question_id'].values
@@ -203,24 +199,14 @@ class Experiment_Pipeline():
             str_emb = row["content_emb"].strip('][').split(',')
             float_emb = [float(emb) for emb in str_emb]
             emb_dict_train[(int(row['student_id']), int(row['unique_question_id']))] = float_emb
-            # print("(row['student_id'], row['question_id']) is ", (row['student_id'], row['question_id']))
-        # print("emb_dict_train[(136,9)] is ", emb_dict_train[(136,9)])
+
         for _, row in dataframe_test.iterrows():
             str_emb = row["content_emb"].strip('][').split(',')
             float_emb = [float(emb) for emb in str_emb]
             emb_dict_test[(int(row['student_id']), int(row['unique_question_id']))] = float_emb
-        # print("type of row['student_id'] is ", type(row['student_id']))
-        # print("type of row['question_id'] is ", type(row['question_id']))
-        # print("emb_dict_test[(136, 9)] is ", emb_dict_test[(136, 9)])
+
         self.emb_dict_train = emb_dict_train
         self.emb_dict_test = emb_dict_test
-
-        # dataset = CustomDataset(dataframe_train, emb_dict_train, self.max_length)
-        # test_dataset = CustomDataset(dataframe_test, emb_dict_test, self.max_length)
-
-        # train_size = int(0.8 * len(dataset))
-        # val_size = len(dataset) - train_size
-        # train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
         
         unique_student_ids = dataframe_train["student_id"].unique()
         train_student_ids, val_student_ids = train_test_split(unique_student_ids, test_size=0.2, random_state=self.train_test_seed)
@@ -339,8 +325,6 @@ class Experiment_Pipeline():
 
             loss = loss + model.lambda_r * loss_r + model.lambda_w1 * loss_w1 + model.lambda_w2 * loss_w2
         elif model_name in ["akt","folibikt", "akt_vector", "akt_norasch", "akt_mono", "akt_attn", "aktattn_pos", "aktmono_pos", "akt_raschx", "akt_raschy", "aktvec_raschx","dtransformer"]:
-            print("ys[0].shape is ", ys[0].shape)
-            print("mask_future.shape is ", mask_future.shape)
             y = torch.masked_select(ys[0], mask_future)
             t = torch.masked_select(rshft, mask_future)
             loss = binary_cross_entropy(y.double(), t.double()) + preloss[0]
@@ -374,11 +358,6 @@ class Experiment_Pipeline():
                 mask_future = batch['mask_future'].to(self.device)
                 
                 ys, preloss = [], []
-                # cq = torch.cat((question_past[:,0:1], question_future), dim=1)
-                # cc = torch.cat((concept_past[:,0:1], concept_future), dim=1)
-                # cr = torch.cat((response_past[:,0:1], response_future), dim=1)
-                print("question_past.shape is ", question_past.shape)
-                print("question_future.shape is ", question_future.shape)
                 
                 match self.input_type:
                     case 'past':
@@ -394,9 +373,7 @@ class Experiment_Pipeline():
                 
                 match self.model_name:
                     case 'akt':
-                        # y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
                         y, reg_loss = self.model(c, r, id, self.emb_dict_train, q)
-                        print("y.shape is ", y.shape)
                         if self.input_type == "past_future":
                             ys.append(y[:, self.max_length:])
                         elif self.input_type == "past":
@@ -411,8 +388,7 @@ class Experiment_Pipeline():
                         ys.append(y)
                     case 'atkt':
                         y, features = self.model(c.long(), r.long(), id, self.emb_dict_train, q)
-                        # print("y is ", y)
-                        # print("features is ", features)
+
                         if self.input_type == "past_future":
                             y = (y[:, self.max_length:, :] * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
                         else:
@@ -493,9 +469,6 @@ class Experiment_Pipeline():
                 mask_future = batch['mask_future'].to(self.device)
                 
                 ys, preloss = [], []
-                # cq = torch.cat((question_past[:,0:1], question_future), dim=1)
-                # cc = torch.cat((concept_past[:,0:1], concept_future), dim=1)
-                # cr = torch.cat((response_past[:,0:1], response_future), dim=1)
                 
                 match self.input_type:
                     case 'past':
@@ -520,12 +493,11 @@ class Experiment_Pipeline():
                         preloss.append(reg_loss)
                     case 'dkt':
                         y = self.model(c.long(), r.long(), id, emb_dic, q)
-                        print("y.shape is ", y.shape)
                         if self.input_type == "past_future":
                             y = (y[:, self.max_length:, :] * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
                         else:
                             y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
-                        # print("y.shape is ", y.shape)
+
                         ys.append(y)
                     case 'atkt':
                         y, _ = self.model(c.long(), r.long(), id, emb_dic, q)
@@ -555,7 +527,6 @@ class Experiment_Pipeline():
                 
                 if self.input_type == "past_future" and self.model_name in ["akt", "dkvmn"]:
                     y = torch.masked_select(y[:, self.max_length:], mask_future).detach().cpu()
-                # elif self.input_type == "past":
                 else:
                     y = torch.masked_select(y, mask_future).detach().cpu()
                 t = torch.masked_select(response_future, mask_future).detach().cpu()
