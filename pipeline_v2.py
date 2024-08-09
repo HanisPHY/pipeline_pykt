@@ -75,9 +75,9 @@ class CustomDataset(Dataset):
             return None
             
         # Process past data
-        concept_past = past_data['course_name'].values
+        concept_past = past_data['unique_slide_id'].values
         response_past = past_data['correctness'].values
-        question_past = past_data['question_id'].values
+        question_past = past_data['unique_question_id'].values
         # print("past_data['student_id'] is\n", past_data['student_id'])
         id_data_past = past_data['student_id'].values[0]
         
@@ -113,9 +113,9 @@ class CustomDataset(Dataset):
         
         # Process future(shift) data
         # print("Future data is ", future_data)
-        concept_future = future_data['course_name'].values
+        concept_future = future_data['unique_slide_id'].values
         response_future = future_data['correctness'].values
-        question_future = future_data['question_id'].values
+        question_future = future_data['unique_question_id'].values
         id_data_future = future_data['student_id'].values[0]
         
         # Padding
@@ -202,13 +202,13 @@ class Experiment_Pipeline():
         for _, row in dataframe_train.iterrows():
             str_emb = row["content_emb"].strip('][').split(',')
             float_emb = [float(emb) for emb in str_emb]
-            emb_dict_train[(int(row['student_id']), int(row['question_id']))] = float_emb
+            emb_dict_train[(int(row['student_id']), int(row['unique_question_id']))] = float_emb
             # print("(row['student_id'], row['question_id']) is ", (row['student_id'], row['question_id']))
         # print("emb_dict_train[(136,9)] is ", emb_dict_train[(136,9)])
         for _, row in dataframe_test.iterrows():
             str_emb = row["content_emb"].strip('][').split(',')
             float_emb = [float(emb) for emb in str_emb]
-            emb_dict_test[(int(row['student_id']), int(row['question_id']))] = float_emb
+            emb_dict_test[(int(row['student_id']), int(row['unique_question_id']))] = float_emb
         # print("type of row['student_id'] is ", type(row['student_id']))
         # print("type of row['question_id'] is ", type(row['question_id']))
         # print("emb_dict_test[(136, 9)] is ", emb_dict_test[(136, 9)])
@@ -580,11 +580,11 @@ def run_exp():
     dataset_raw_path = './data/gkt_new/cogedu_emb.csv'
     log_folder = './data'
 
-    # concept: course
+    # concept: slide
     # 1-index: +1; 0-index: no need to +1
     # Embedding layer size match
-    num_c = 12 + 1  # Course name
-    num_q = 119 + 1  # Number of unique problem IDs
+    num_c = 195 + 1  # slide id
+    num_q = 233 + 1  # Number of unique problem IDs
     d_model = 200  # Model dimension
     n_blocks = 4  # Number of blocks
     dropout = 0.2  # Dropout rate
@@ -594,6 +594,7 @@ def run_exp():
 
     experiment_pipeline = Experiment_Pipeline(20, log_folder, dataset_raw_path, 'none', num_q, num_c, d_model, n_blocks, dropout, model_name, emb_size, input_type)
     experiment_pipeline.dataset_prepare(dataset_path_train, dataset_path_test)
+    print("--------------training--------------")
     experiment_pipeline.model_train(epochs=30)
     print("--------------testing--------------")
     experiment_pipeline.model_eval(eval_mode='test')
