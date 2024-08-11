@@ -21,11 +21,14 @@ from model.dkt import DKT
 from model.atkt import ATKT
 from model.saint import SAINT
 from model.dkvmn import DKVMN
+from model.simplykt import simpleKT
 
 from torch.nn.functional import binary_cross_entropy
 
 from torch.autograd import Variable, grad
 from model.atkt import _l2_normalize_adv
+
+import argparse
 
 ATKT_SKILL_DIM=256
 ATKT_ANSWER_DIM=96
@@ -252,10 +255,11 @@ class Experiment_Pipeline():
                     self.model = DKT(self.num_c, self.emb_size).to(self.device)
                 case "atkt":
                     self.model = ATKT(self.num_c, ATKT_SKILL_DIM, ATKT_ANSWER_DIM, ATKT_HIDDEN_DIM).to(self.device)
-                case "saint":
-                    self.model = SAINT(self.num_q, self.num_c, self.max_length, self.emb_size, NUM_ATTN_HEADS, DROPOUT).to(self.device)
                 case "dkvmn":
                     self.model = DKVMN(self.num_c, dim_s=200, size_m=50).to(self.device)
+                case "simpltKT":
+                    self.model = simpleKT(self.num_c, self.num_q, self.d_model, n_blocks=2, dropout=0.1).to(self.device)
+                
                 
 
             self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -272,10 +276,10 @@ class Experiment_Pipeline():
                     self.model = DKT(self.num_c, self.emb_size).to(self.device)
                 case "atkt":
                     self.model = ATKT(self.num_c, ATKT_SKILL_DIM, ATKT_ANSWER_DIM, ATKT_HIDDEN_DIM).to(self.device)
-                case "saint":
-                    self.model = SAINT(self.num_q, self.num_c, self.max_length, self.emb_size, NUM_ATTN_HEADS, DROPOUT).to(self.device)
                 case "dkvmn":
                     self.model = DKVMN(self.num_c, dim_s=DKVMN_DIM_S, size_m=DKVMN_SIZE_M).to(self.device)
+                case "simpleKT":
+                    self.model = simpleKT(self.num_c, self.num_q, self.d_model, n_blocks=2, dropout=0.1).to(self.device)
                     
             self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
             self.epoch_exist = 0
@@ -406,15 +410,18 @@ class Experiment_Pipeline():
                             pred_res = (pred_res * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
                         adv_loss = self.cal_loss(self.model, [pred_res], response_past, response_future, mask_past, mask_future)
                         loss = loss + self.model.beta * adv_loss
-                    case 'saint':
-                        y = self.model(question_past.long(), concept_past.long(), response_past.long(), id_data_past, self.emb_dict_train)
-                        ys.append(y[:, 1:])
                     case 'dkvmn':
                         y = self.model(c.long(), r.long(), id, self.emb_dict_train, q)
                         if self.input_type == "past_future":
                             ys.append(y[:, self.max_length:])
                         elif self.input_type == "past":
                             ys.append(y)
+                    case 'simpleKT':
+                        y, y2, y3 = self.model(q, c, r, id, self.emb_dict_train, train=True)
+                        if self.input_type == "past_future":
+                            ys = [y[:, self.max_length:]]
+                        elif self.input_type == "past":
+                            ys = [y]
                                             
                 if self.model_name not in ["atkt", "atktfix"]:
                     loss = self.cal_loss(self.model, ys, response_past, response_future, mask_past, mask_future, preloss)
@@ -505,11 +512,15 @@ class Experiment_Pipeline():
                             y = (y[:, self.max_length:, :] * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
                         else:
                             y = (y * one_hot(concept_future.long(), self.model.num_c)).sum(-1)
-                    case 'saint':
-                        y, h = self.model(question_past.long(), concept_past.long(), response_past.long(), id_data_past, emb_dic, True)
-                        y = y[:,1:]
                     case 'dkvmn':
                         y = self.model(c.long(), r.long(), id, emb_dic, q)
+                        if self.input_type == "past_future":
+                            ys.append(y[:, self.max_length:])
+                        elif self.input_type == "past":
+                            ys.append(y)
+                    case 'simpleKT':
+                        y = self.model(q, c, r, id, emb_dic)
+                        print(y.shape)
                         if self.input_type == "past_future":
                             ys.append(y[:, self.max_length:])
                         elif self.input_type == "past":
@@ -525,7 +536,8 @@ class Experiment_Pipeline():
                     print("Didn't calculate loss.")
                     total_loss = 0
                 
-                if self.input_type == "past_future" and self.model_name in ["akt", "dkvmn"]:
+                # outputs of DKT and ATKT have already been processed
+                if self.input_type == "past_future" and self.model_name in ["akt", "dkvmn", "simpleKT"]:
                     y = torch.masked_select(y[:, self.max_length:], mask_future).detach().cpu()
                 else:
                     y = torch.masked_select(y, mask_future).detach().cpu()
@@ -545,7 +557,7 @@ class Experiment_Pipeline():
 
         return avg_loss, accuracy, f1
 
-def run_exp():
+def run_exp(model_name, input_type):
     dataset_path_train = './data/gkt_new/cogedu_emb_train.csv'
     dataset_path_test = './data/gkt_new/cogedu_emb_test.csv'
     dataset_raw_path = './data/gkt_new/cogedu_emb.csv'
@@ -560,8 +572,6 @@ def run_exp():
     n_blocks = 4  # Number of blocks
     dropout = 0.2  # Dropout rate
     emb_size = 200
-    model_name = "dkt"
-    input_type = "past_future"
 
     experiment_pipeline = Experiment_Pipeline(20, log_folder, dataset_raw_path, 'none', num_q, num_c, d_model, n_blocks, dropout, model_name, emb_size, input_type)
     experiment_pipeline.dataset_prepare(dataset_path_train, dataset_path_test)
@@ -570,4 +580,11 @@ def run_exp():
     print("--------------testing--------------")
     experiment_pipeline.model_eval(eval_mode='test')
 
-run_exp()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_name', type=str, default="simpleKT")
+    parser.add_argument('--input_type', type=str, default="past_future")
+
+    args = parser.parse_args()
+
+    run_exp(model_name=args.model_name, input_type=args.input_type)
