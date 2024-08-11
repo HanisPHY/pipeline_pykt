@@ -89,7 +89,6 @@ class DKVMN(Module):
         p = self.p_layer(self.dropout_layer(f))
 
         p = torch.sigmoid(p)
-        # print(f"p: {p.shape}")
         p = p.squeeze(-1)
         if not qtest:
             return p

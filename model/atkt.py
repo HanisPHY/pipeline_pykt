@@ -44,13 +44,9 @@ class ATKT(nn.Module):
 
     
     def attention_module(self, lstm_output):
-        # lstm_output = lstm_output[0:1, :, :]
-        # print(f"lstm_output: {lstm_output.shape}")
         att_w = self.mlp(lstm_output)
-        # print(f"att_w: {att_w.shape}")
         att_w = torch.tanh(att_w)
         att_w = self.similarity(att_w)
-        # print(f"att_w: {att_w.shape}")
 
         if self.fix == True:
             attn_mask = ut_mask(lstm_output.shape[1])
@@ -62,13 +58,9 @@ class ATKT(nn.Module):
             alphas=nn.Softmax(dim=1)(att_w)
             # print(f"alphas: {alphas.shape}")    
             attn_ouput = alphas*lstm_output # 整个seq的attn之和为1，计算前面的的时候，所有的attn都<<1，不会有问题？做的少的时候，历史作用小，做得多的时候，历史作用变大？
-            # print(f"attn_ouput: {attn_ouput.shape}")
+
         attn_output_cum=torch.cumsum(attn_ouput, dim=1)
-        # print(f"attn_ouput: {attn_ouput}")
-        # print(f"attn_output_cum: {attn_output_cum}")
         attn_output_cum_1=attn_output_cum-attn_ouput
-        # print(f"attn_output_cum_1: {attn_output_cum_1}")
-        # print(f"lstm_output: {lstm_output}")
 
         final_output=torch.cat((attn_output_cum_1, lstm_output),2)
         # import sys
@@ -104,12 +96,6 @@ class ATKT(nn.Module):
         answer=answer.unsqueeze(2).expand_as(skill_answer)
         
         skill_answer_embedding=torch.where(answer==1, skill_answer, answer_skill)
-        # print(f"skill: {skill.shape}")
-        # print(f"skill_answer_embedding: {skill_answer_embedding.shape}")
-        # print(f"age: {age.shape}")
-        # print(f"edu: {edu.shape}")
-        # print(f"major: {major.shape}")
-        # print(skill_answer_embedding)
         
         # skill_answer_embedding1=skill_answer_embedding
         if  perturbation is not None:
@@ -117,13 +103,8 @@ class ATKT(nn.Module):
         
         combined_emb = torch.cat([skill_answer_embedding, bert_embeddings], dim=-1)    
         out,_ = self.rnn(combined_emb)
-        # print(f"out: {out.shape}")
         out=self.attention_module(out)
-        # print(f"after attn out: {out.shape}")
         res = self.sig(self.fc(self.dropout_layer(out)))
-
-        # res = res[:, :-1, :]
-        # pred_res = self._get_next_pred(res, skill)
         
         return res, skill_answer_embedding
 

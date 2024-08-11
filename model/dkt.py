@@ -26,7 +26,6 @@ class DKT(Module):
 
     # model input: concept, response
     def forward(self, q, r, id, emb_dic, question):
-        # print(f"q.shape is {q.shape}")
         batch_size, seqlen = question.shape
         bert_embeddings = []
         for i in range(batch_size):
@@ -43,29 +42,7 @@ class DKT(Module):
         emb_type = self.emb_type
         if emb_type == "qid":
             x = q + self.num_c * r
-            # print("q is ", q)
-            # print("x.shape is ", x.shape)
-            # print("self.num_c is ", self.num_c)
-            # print("x.min():", x.min().item(), "x.max():", x.max().item())
-            # print("q.min(): ", q.min().item(), "q.max():", q.max().item())
             xemb = self.interaction_emb(x)
-    
-        print(f"xemb.shape is {xemb.shape}, device: {xemb.device}")
-        print(f"bert_embeddings.shape is {bert_embeddings.shape}, device: {bert_embeddings.device}")
-        
-        # batch_size, seqlen = q.shape
-        # bert_embeddings = []
-        # for i in range(batch_size):
-        #     batch_emb = []
-        #     for pid in q[i]:
-        #         print(pid)
-        #         if pid.item() == 0:
-        #             emb = [0.0] * 768
-        #         else:
-        #             emb = emb_dic[(id[i].item(), pid.item())]
-        #         batch_emb.append(emb)
-        #     bert_embeddings.append(batch_emb)
-        # bert_embeddings = torch.tensor(bert_embeddings, dtype=torch.float32).to(q.device)
 
         combined_emb = torch.cat([xemb, bert_embeddings], dim=-1)
         

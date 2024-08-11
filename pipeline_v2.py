@@ -21,7 +21,7 @@ from model.dkt import DKT
 from model.atkt import ATKT
 from model.saint import SAINT
 from model.dkvmn import DKVMN
-from model.simplykt import simpleKT
+from model.simplekt import simpleKT
 
 from torch.nn.functional import binary_cross_entropy
 
@@ -310,7 +310,6 @@ class Experiment_Pipeline():
                 loss = loss1
 
         elif model_name in ["rkt","dimkt","dkt", "dkt_forget", "dkvmn","deep_irt", "kqn", "sakt", "saint", "atkt", "atktfix", "gkt", "skvmn", "hawkes"]:
-            print(ys[0].shape, mask_future.shape)
             y = torch.masked_select(ys[0], mask_future)
             t = torch.masked_select(rshft, mask_future)
             loss = binary_cross_entropy(y.double(), t.double())
@@ -520,7 +519,6 @@ class Experiment_Pipeline():
                             ys.append(y)
                     case 'simpleKT':
                         y = self.model(q, c, r, id, emb_dic)
-                        print(y.shape)
                         if self.input_type == "past_future":
                             ys.append(y[:, self.max_length:])
                         elif self.input_type == "past":
@@ -535,6 +533,11 @@ class Experiment_Pipeline():
                 else:
                     print("Didn't calculate loss.")
                     total_loss = 0
+                    
+                if eval_mode == 'test':
+                    pred = torch.masked_select(ys[0], mask_future)
+                    label = torch.masked_select(response_future, mask_future)
+                    pred = (pred > 0.5)
                 
                 # outputs of DKT and ATKT have already been processed
                 if self.input_type == "past_future" and self.model_name in ["akt", "dkvmn", "simpleKT"]:
@@ -550,6 +553,10 @@ class Experiment_Pipeline():
             ts = np.concatenate(y_trues, axis=0)
             ps = np.concatenate(y_scores, axis=0)
             prelabels = [1 if p >= 0.5 else 0 for p in ps]
+            
+            if eval_mode == 'test':
+                print("Prediction is \n", prelabels)
+                print("Actual label is \n", ts)
 
             accuracy = accuracy_score(ts, prelabels)
             f1 = f1_score(ts, prelabels, average='weighted')

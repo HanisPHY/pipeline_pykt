@@ -70,11 +70,6 @@ class AKT(nn.Module):
                 torch.nn.init.constant_(p, 0.)
 
     def base_emb(self, q_data, target):
-        # print(f"q_data: {q_data}")
-        # print(f"target: {target}")
-        # print(f"qa_embed.num_embeddings: {self.qa_embed.num_embeddings}")
-        # print(f"qa_embed embedding weight shape: {self.qa_embed.weight.shape}")
-        
         if torch.max(target) >= self.qa_embed.num_embeddings:
             raise IndexError(f"target contains invalid indices: max index {torch.max(target)} exceeds {self.qa_embed.num_embeddings - 1}")
     
@@ -91,11 +86,6 @@ class AKT(nn.Module):
     # target: respone
     # pid_dat: question
     def forward(self, q_data, target, id, emb_dic, pid_data=None, qtest=False):
-        # print("pid_data.shape is ", pid_data.shape)
-        # print("q_data.shape is ", q_data.shape)
-        # print("target.shape is ", target.shape)
-        # print(q_data)
-    
         emb_type = self.emb_type
         
         # Batch First
@@ -125,10 +115,8 @@ class AKT(nn.Module):
         # Pass to the decoder
         # output shape BS,seqlen,d_model or d_model//2
         d_output = self.model(q_embed_data, qa_embed_data, pid_embed_data)
-        print("d_output.shape is ", d_output.shape)
 
         concat_q = torch.cat([d_output, q_embed_data], dim=-1)
-        print("concat_q.shape is ", concat_q.shape)
         
         batch_size, seqlen = pid_data.shape
         bert_embeddings = []
@@ -144,77 +132,17 @@ class AKT(nn.Module):
                 batch_emb.append(emb)
             bert_embeddings.append(batch_emb)
         bert_embeddings = torch.tensor(bert_embeddings, dtype=torch.float32).to(q_data.device)
-        print("bert_embeddings.shape is ", bert_embeddings.shape)
-        # print("Shape of embedding is ", concat_q.shape)
+
         combined_q = torch.cat([concat_q, bert_embeddings], dim=-1)
         
         output = self.out(combined_q).squeeze(-1)
-        print("output.shape is ", self.out(combined_q).shape)
+        
         m = nn.Sigmoid()
         preds = m(output)
         if not qtest:
             return preds, c_reg_loss
         else:
             return preds, c_reg_loss, combined_q
-    
-    # def forward(self, q_data, target, id, emb_dic, pid_data=None, qtest=False):
-    #     print("pid_data.shape is ", pid_data.shape)
-    #     print("id.shape is ", id.shape)
-    #     emb_type = self.emb_type
-        
-    #     # Check the max index for embeddings
-    #     if torch.max(q_data) >= self.n_question:
-    #         raise ValueError(f"q_data contains invalid question indices: max index {torch.max(q_data)} exceeds {self.n_question - 1}")
-    #     if torch.max(pid_data) >= self.n_pid:
-    #         raise ValueError(f"pid_data contains invalid problem indices: max index {torch.max(pid_data)} exceeds {self.n_pid - 1}")
-
-    #     # Batch First
-    #     if emb_type.startswith("qid"):
-    #         q_embed_data, qa_embed_data = self.base_emb(q_data, target)
-
-    #     pid_embed_data = None
-    #     if self.n_pid > 0: # have problem id
-    #         q_embed_diff_data = self.q_embed_diff(q_data)  # d_ct
-    #         pid_embed_data = self.difficult_param(pid_data)  # uq
-    #         q_embed_data = q_embed_data + pid_embed_data * q_embed_diff_data  # uq *d_ct + c_ct
-
-    #         qa_embed_diff_data = self.qa_embed_diff(target)  # f_(ct,rt)
-    #         if self.separate_qa:
-    #             qa_embed_data = qa_embed_data + pid_embed_data * qa_embed_diff_data  # uq* f_(ct,rt) + e_(ct,rt)
-    #         else:
-    #             qa_embed_data = qa_embed_data + pid_embed_data * (qa_embed_diff_data + q_embed_diff_data)
-    #         c_reg_loss = (pid_embed_data ** 2.).sum() * self.l2
-    #     else:
-    #         c_reg_loss = 0.
-
-    #     # Pass to the decoder
-    #     d_output = self.model(q_embed_data, qa_embed_data, pid_embed_data)
-
-    #     concat_q = torch.cat([d_output, q_embed_data], dim=-1)
-
-    #     batch_size, seqlen = pid_data.shape
-    #     bert_embeddings = []
-    #     for i in range(batch_size):
-    #         batch_emb = []
-    #         for pid in pid_data[i]:
-    #             emb = emb_dic.get((id[i].item(), pid.item()))
-    #             if emb is None:
-    #                 raise ValueError(f"No embedding found for (student_id, question_id): ({id[i].item()}, {pid.item()})")
-    #             str_emb = emb.strip('][').split(', ')
-    #             float_emb = [float(e) for e in str_emb]
-    #             batch_emb.append(float_emb)
-    #         bert_embeddings.append(batch_emb)
-    #     bert_embeddings = torch.tensor(bert_embeddings, dtype=torch.float32).to(q_data.device)
-
-    #     combined_q = torch.cat([concat_q, bert_embeddings], dim=-1)
-
-    #     output = self.out(combined_q).squeeze(-1)
-    #     m = nn.Sigmoid()
-    #     preds = m(output)
-    #     if not qtest:
-    #         return preds, c_reg_loss
-    #     else:
-    #         return preds, c_reg_loss, combined_q
 
 
 
@@ -473,18 +401,14 @@ def attention(q, k, v, d_k, mask, dropout, zero_pad, gamma=None, pdiff=None):
 
     scores.masked_fill_(mask == 0, -1e32)
     scores = F.softmax(scores, dim=-1)  # BS,8,seqlen,seqlen
-    # print(f"before zero pad scores: {scores.shape}")
-    # print(zero_pad)
+
     if zero_pad:
         pad_zero = torch.zeros(bs, head, 1, seqlen).to(device)
         scores = torch.cat([pad_zero, scores[:, :, 1:, :]], dim=2) # 第一行score置0
-    # print(f"after zero pad scores: {scores}")
+
     scores = dropout(scores)
-    # print("scores.shape is ", scores.shape)
-    # print("v.shape is ", v.shape)
     output = torch.matmul(scores, v)
-    # import sys
-    # sys.exit()
+
     return output
 
 
