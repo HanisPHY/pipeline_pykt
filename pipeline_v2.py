@@ -1,4 +1,5 @@
 import logging
+import json
 from transformers import logging as transformers_logging
 transformers_logging.set_verbosity_error()
 
@@ -80,6 +81,7 @@ class CustomDataset(Dataset):
         response_past = past_data['correctness'].values
         question_past = past_data['unique_question_id'].values
         id_data_past = past_data['student_id'].values[0]
+        uid_data_past = past_data['uid'].values
         
         # Padding
         pad_length_past = self.max_length - len(concept_past)
@@ -88,11 +90,13 @@ class CustomDataset(Dataset):
             concept_past = np.pad(concept_past, (0, pad_length_past), 'constant', constant_values=0)
             response_past = np.pad(response_past, (0, pad_length_past), 'constant', constant_values=0)
             question_past = np.pad(question_past, (0, pad_length_past), 'constant', constant_values=0)
+            uid_data_past = np.pad(uid_data_past, (0, pad_length_past), 'constant', constant_values='0')
             mask_past[len(concept_past)-pad_length_past:] = 0
         else:
             concept_past = concept_past[:self.max_length]
             response_past = response_past[:self.max_length]
             question_past = question_past[:self.max_length]
+            uid_data_past = uid_data_past[:self.max_length]
         
         concept_past = torch.tensor(concept_past, dtype=torch.int)
         response_past = torch.tensor(response_past, dtype=torch.int)
@@ -116,6 +120,7 @@ class CustomDataset(Dataset):
         response_future = future_data['correctness'].values
         question_future = future_data['unique_question_id'].values
         id_data_future = future_data['student_id'].values[0]
+        uid_data_future = future_data['uid'].values
         
         # Padding
         pad_length_future = self.max_length - len(concept_future)
@@ -124,11 +129,13 @@ class CustomDataset(Dataset):
             concept_future = np.pad(concept_future, (0, pad_length_future), 'constant', constant_values=0)
             response_future = np.pad(response_future, (0, pad_length_future), 'constant', constant_values=0)
             question_future = np.pad(question_future, (0, pad_length_future), 'constant', constant_values=0)
+            uid_data_future = np.pad(uid_data_future, (0, pad_length_future), 'constant', constant_values='0')
             mask_future[len(concept_future)-pad_length_future:] = 0
         else:
             concept_future = concept_future[:self.max_length]
             response_future = response_future[:self.max_length]
             question_future = question_future[:self.max_length]
+            uid_data_future = uid_data_future[:self.max_length]
     
         concept_future = torch.tensor(concept_future, dtype=torch.int)
         response_future = torch.tensor(response_future, dtype=torch.int)
@@ -151,14 +158,16 @@ class CustomDataset(Dataset):
             'response_past': response_past,
             'question_past': question_past,
             'id_data_past': id_data_past,
+            'uid_data_past': uid_data_past,
             'emb_data_past': emb_data_past,
             'mask_past': mask_past,
             'concept_future': concept_future,
             'response_future': response_future,
             'question_future': question_future,
             'id_data_future': id_data_future,
+            'uid_data_future': uid_data_future,
             'emb_data_future': emb_data_future,
-            'mask_future': mask_future,
+            'mask_future': mask_future
         }
 
 class Experiment_Pipeline():
@@ -228,7 +237,19 @@ class Experiment_Pipeline():
     def custom_collate_fn(self, batch):
         # Filter out empty dictionaries
         batch = [data for data in batch if data]
-        return default_collate(batch)
+        
+        uids_past = [item['uid_data_past'] for item in batch]
+        uids_future = [item['uid_data_future'] for item in batch]
+        
+        for item in batch:
+            del item['uid_data_past']
+            del item['uid_data_future']
+            
+        batch = default_collate(batch)
+        batch['uid_data_past'] = uids_past
+        batch['uid_data_future'] = uids_future
+        
+        return batch
 
     def model_save(self, checkpoint, checkpoint_path):
         if os.path.exists(checkpoint_path): os.remove(checkpoint_path)
@@ -474,6 +495,10 @@ class Experiment_Pipeline():
                 id_data_future = batch['id_data_future'].to(self.device)
                 mask_future = batch['mask_future'].to(self.device)
                 
+                uid_data_past = batch['uid_data_past']
+                uid_data_future = batch['uid_data_future']
+                uid = uid_data_future
+                
                 ys, preloss = [], []
                 
                 match self.input_type:
@@ -487,7 +512,7 @@ class Experiment_Pipeline():
                         r = torch.cat((response_past, response_future), dim=1)
                         q = torch.cat((question_past, question_future), dim=1)
                         id = torch.cat((id_data_past, id_data_future), dim=0)
-                
+             
                 match self.model_name:
                     case 'akt':
                         # y, reg_loss = self.model(cc, cr, id_data, self.emb_dict_train, cq)
@@ -533,11 +558,6 @@ class Experiment_Pipeline():
                 else:
                     print("Didn't calculate loss.")
                     total_loss = 0
-                    
-                if eval_mode == 'test':
-                    pred = torch.masked_select(ys[0], mask_future)
-                    label = torch.masked_select(response_future, mask_future)
-                    pred = (pred > 0.5)
                 
                 # outputs of DKT and ATKT have already been processed
                 if self.input_type == "past_future" and self.model_name in ["akt", "dkvmn", "simpleKT"]:
@@ -555,8 +575,18 @@ class Experiment_Pipeline():
             prelabels = [1 if p >= 0.5 else 0 for p in ps]
             
             if eval_mode == 'test':
-                print("Prediction is \n", prelabels)
-                print("Actual label is \n", ts)
+                uids = []
+                for j, batch_mask in enumerate(mask_future):
+                    for i, mask in enumerate(batch_mask):
+                        if mask:
+                            uids.append(uid[j][i])
+                            
+                dic = {}
+                for i, uid in enumerate(uids):
+                    dic[uid] = {"Prediction": str(prelabels[i]), "Label": str(ts[i])}
+                    
+                with open(f'./output/{self.model_name}_{self.input_type}_output_data.json', 'w') as json_file:
+                    json.dump(dic, json_file)
 
             accuracy = accuracy_score(ts, prelabels)
             f1 = f1_score(ts, prelabels, average='weighted')
@@ -580,7 +610,7 @@ def run_exp(model_name, input_type):
     dropout = 0.2  # Dropout rate
     emb_size = 200
 
-    experiment_pipeline = Experiment_Pipeline(20, log_folder, dataset_raw_path, 'none', num_q, num_c, d_model, n_blocks, dropout, model_name, emb_size, input_type)
+    experiment_pipeline = Experiment_Pipeline(100, log_folder, dataset_raw_path, 'none', num_q, num_c, d_model, n_blocks, dropout, model_name, emb_size, input_type)
     experiment_pipeline.dataset_prepare(dataset_path_train, dataset_path_test)
     print("--------------training--------------")
     experiment_pipeline.model_train(epochs=30)
