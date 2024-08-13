@@ -208,12 +208,12 @@ class Experiment_Pipeline():
         emb_dict_test = {"type": "test"}
 
         for _, row in dataframe_train.iterrows():
-            str_emb = row["content_emb"].strip('][').split(',')
+            str_emb = row["embedding_bert"].strip('][').split(',')
             float_emb = [float(emb) for emb in str_emb]
             emb_dict_train[(int(row['student_id']), int(row['unique_question_id']))] = float_emb
 
         for _, row in dataframe_test.iterrows():
-            str_emb = row["content_emb"].strip('][').split(',')
+            str_emb = row["embedding_bert"].strip('][').split(',')
             float_emb = [float(emb) for emb in str_emb]
             emb_dict_test[(int(row['student_id']), int(row['unique_question_id']))] = float_emb
 
@@ -585,7 +585,7 @@ class Experiment_Pipeline():
                 for i, uid in enumerate(uids):
                     dic[uid] = {"Prediction": str(prelabels[i]), "Label": str(ts[i])}
                     
-                with open(f'./output/{self.model_name}_{self.input_type}_output_data.json', 'w') as json_file:
+                with open(f'./output/eduAgent/{self.model_name}_{self.input_type}_output_data.json', 'w') as json_file:
                     json.dump(dic, json_file)
 
             accuracy = accuracy_score(ts, prelabels)
@@ -595,16 +595,28 @@ class Experiment_Pipeline():
         return avg_loss, accuracy, f1
 
 def run_exp(model_name, input_type):
-    dataset_path_train = './data/gkt_new/cogedu_emb_train.csv'
-    dataset_path_test = './data/gkt_new/cogedu_emb_test.csv'
-    dataset_raw_path = './data/gkt_new/cogedu_emb.csv'
+    # GKT
+    # dataset_path_train = './data/gkt_new/cogedu_emb_train.csv'
+    # dataset_path_test = './data/gkt_new/cogedu_emb_test.csv'
+    # dataset_raw_path = './data/gkt_new/cogedu_emb.csv'
+    
+    # eduAgent
+    dataset_path_train = './data/gkt_bert/eduAgent_emb_train.csv'
+    dataset_path_test = './data/gkt_bert/eduAgent_emb_test.csv'
+    dataset_raw_path = './data/gkt_bert/eduAgent_emb_train.csv'
     log_folder = './data'
 
     # concept: slide
     # 1-index: +1; 0-index: no need to +1
     # Embedding layer size match
-    num_c = 195 + 1  # slide id
-    num_q = 233 + 1  # Number of unique problem IDs
+    
+    # GKT
+    # num_c = 195 + 1  # slide id
+    # num_q = 233 + 1  # Number of unique problem IDs
+    
+    # eduAgent
+    num_c = 18 + 1  # slide id
+    num_q = 58 + 1  # Number of unique problem IDs
     d_model = 200  # Model dimension
     n_blocks = 4  # Number of blocks
     dropout = 0.2  # Dropout rate
