@@ -175,7 +175,7 @@ class Experiment_Pipeline():
         self.max_length = max_length
         self.set_seed(4)
 
-        self.dataframe_raw = pd.read_csv(dataset_raw_path, sep='\t')
+        self.dataframe_raw = pd.read_csv(dataset_raw_path)
         self.log_folder = log_folder
         self.load_model_type = load_model_type
 
@@ -575,18 +575,22 @@ class Experiment_Pipeline():
             prelabels = [1 if p >= 0.5 else 0 for p in ps]
             
             if eval_mode == 'test':
+                self.dataframe_raw['predicted_correctness'] = -1
                 uids = []
+                
                 for j, batch_mask in enumerate(mask_future):
                     for i, mask in enumerate(batch_mask):
                         if mask:
                             uids.append(uid[j][i])
-                            
-                dic = {}
+                
                 for i, uid in enumerate(uids):
-                    dic[uid] = {"Prediction": str(prelabels[i]), "Label": str(ts[i])}
-                    
-                with open(f'./output/eduAgent/{self.model_name}_{self.input_type}_output_data.json', 'w') as json_file:
-                    json.dump(dic, json_file)
+                    self.dataframe_raw.loc[self.dataframe_raw["uid"] == uid, "predicted_correctness"] = prelabels[i]
+                # print(uids[0], prelabels[0])
+                # print(self.dataframe_raw[self.dataframe_raw["uid"] == 'c6442e41-39f3-4589-81fc-c7162eda3471'])
+                
+                self.dataframe_raw.to_csv(f"./output/eduAgent/{self.model_name}_{self.input_type}_output_data.csv", index=False)
+                # print(self.dataframe_raw["predicted_correctness"])
+                print("sum is ", sum(self.dataframe_raw["predicted_correctness"]))
 
             accuracy = accuracy_score(ts, prelabels)
             f1 = f1_score(ts, prelabels, average='weighted')
@@ -596,9 +600,9 @@ class Experiment_Pipeline():
 
 def run_exp(model_name, input_type):
     # GKT
-    # dataset_path_train = './data/gkt_new/cogedu_emb_train.csv'
-    # dataset_path_test = './data/gkt_new/cogedu_emb_test.csv'
-    # dataset_raw_path = './data/gkt_new/cogedu_emb.csv'
+    # dataset_path_train = './data/gkt_new/cogedu_emb_raw_train.csv'
+    # dataset_path_test = './data/gkt_new/cogedu_emb_raw_test.csv'
+    # dataset_raw_path = './data/gkt_new/cogedu_emb_raw.csv'
     
     # eduAgent
     dataset_path_train = './data/gkt_bert/eduAgent_emb_train.csv'
