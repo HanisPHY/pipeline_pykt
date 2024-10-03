@@ -369,6 +369,7 @@ class Experiment_Pipeline():
             for batch in self.train_dataloader:
                 self.optimizer.zero_grad()
                 
+                print(batch['concept_past'])
                 concept_past = batch['concept_past'].to(self.device)
                 response_past = batch['response_past'].to(self.device)
                 question_past = batch['question_past'].to(self.device)
@@ -391,7 +392,8 @@ class Experiment_Pipeline():
                         id = id_data_past
                     case 'past_future':
                         c = torch.cat((concept_past, concept_future), dim=1)
-                        r = torch.cat((response_past, response_future), dim=1)
+                        rsp_future_pad = torch.zeros((response_future.size(0), response_future.size(1))).long()
+                        r = torch.cat((response_past, rsp_future_pad), dim=1)
                         q = torch.cat((question_past, question_future), dim=1)
                         id = torch.cat((id_data_past, id_data_future), dim=0)
                 
@@ -509,7 +511,8 @@ class Experiment_Pipeline():
                         id = id_data_past
                     case 'past_future':
                         c = torch.cat((concept_past, concept_future), dim=1)
-                        r = torch.cat((response_past, response_future), dim=1)
+                        rsp_future_pad = torch.zeros((response_future.size(0), response_future.size(1))).long()
+                        r = torch.cat((response_past, rsp_future_pad), dim=1)
                         q = torch.cat((question_past, question_future), dim=1)
                         id = torch.cat((id_data_past, id_data_future), dim=0)
              
@@ -607,7 +610,7 @@ def run_exp(model_name, input_type):
     # eduAgent
     dataset_path_train = './data/gkt_bert/eduAgent_emb_train.csv'
     dataset_path_test = './data/gkt_bert/eduAgent_emb_test.csv'
-    dataset_raw_path = './data/gkt_bert/eduAgent_emb_train.csv'
+    dataset_raw_path = './data/gkt_bert/eduAgent_emb_test.csv'
     log_folder = './data'
 
     # concept: slide
