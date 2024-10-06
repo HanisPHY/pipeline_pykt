@@ -11,7 +11,7 @@ df1['student_id'] = df1['student_id'].str[1:]
 df1['unique_question_id'] = df1.groupby(['course_name', 'question_id', 'school']).ngroup() + 1
 df1['unique_slide_id'] = df1.groupby(['course_name', 'slide_id', 'school']).ngroup() + 1
 
-# eduAgnet dataset
+# eduAgent dataset
 # df1['unique_slide_id'] = df1.groupby(['course_name', 'slide_id']).ngroup() + 1
 # df1['unique_question_id'] = df1.groupby(['course_name', 'question_id']).ngroup() + 1
 
