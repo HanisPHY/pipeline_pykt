@@ -11,6 +11,10 @@ df1['student_id'] = df1['student_id'].str[1:]
 df1['unique_question_id'] = df1.groupby(['course_name', 'question_id', 'school']).ngroup() + 1
 df1['unique_slide_id'] = df1.groupby(['course_name', 'slide_id', 'school']).ngroup() + 1
 
+# eduAgnet dataset
+# df1['unique_slide_id'] = df1.groupby(['course_name', 'slide_id']).ngroup() + 1
+# df1['unique_question_id'] = df1.groupby(['course_name', 'question_id']).ngroup() + 1
+
 df1 = df1[df1['test_type'] == 'post test']
 
 df1_train = df1[df1['data_type'] == 'train']
